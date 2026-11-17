@@ -1,0 +1,67 @@
+# A published GitHub release gets the app attached as one zip: the same
+# files `make deploy` uploads, built and gated the same way (make test +
+# make smoke). Run it by hand from the Actions tab to get the zip as a
+# workflow artifact without publishing a release.
+name: Release zip
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # gh release upload
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # shadow-cljs runs on the JVM and fetches its deps from Clojars
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository
+          key: m2-${{ hashFiles('shadow-cljs.edn') }}
+
+      - run: npm ci
+
+      - name: Name the zip
+        id: v
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          v="${TAG:-$(git rev-parse --short HEAD)}"
+          echo "version=${v//\//-}" >> "$GITHUB_OUTPUT"
+
+      # one make run: test, then the release bundle once, booted headless
+      # (ubuntu runners ship /usr/bin/google-chrome), then zipped — twice:
+      # the app as deployed, and the enterprise zip without demo graphs
+      - name: Test, build, smoke, zip
+        run: make test smoke dist dist-enterprise smoke-enterprise VERSION=${{ steps.v.outputs.version }}
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" "dist/loretile-app-${{ steps.v.outputs.version }}.zip" "dist/loretile-app-${{ steps.v.outputs.version }}-enterprise.zip" --clobber
+
+      - name: Keep as a workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: loretile-app-${{ steps.v.outputs.version }}
+          path: |
+            dist/loretile-app-${{ steps.v.outputs.version }}.zip
+            dist/loretile-app-${{ steps.v.outputs.version }}-enterprise.zip

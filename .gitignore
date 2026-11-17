@@ -1,0 +1,14 @@
+node_modules/
+.shadow-cljs/
+out/
+dist/
+public/js/*
+!public/js/pdf.min.mjs
+!public/js/pdf.worker.min.mjs
+!public/js/pyrunner.js
+!public/js/pgrunner.js
+*.log
+.publish/
+
+# browser checks write these on every run — local artefacts, never committed
+test/shot-*.png

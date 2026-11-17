@@ -1,0 +1,88 @@
+# Loretile
+
+Learning platform: knowledge graph of small learning objects, per-learner mastery model, AI tutor on top of the graph. Since 2026-10-14 also a graph tool for ANY ontology (a graph = a profile + its log; `learning` is one profile). Named 2026-09-03 (the earlier working name Tessella failed the trademark check). Repo: github.com/smogstate/loretile-private (working repo, has the wiki). Public AGPL copy without `wiki/`: github.com/smogstate/loretile, updated by `make publish` (one squashed snapshot commit per run).
+
+## Where things are
+
+- **Wiki** `wiki/` (start at `wiki/Home.md`) — every decision. Data model: `wiki/Data-Model.md`. Ontologies: `wiki/Profiles.md`.
+- **How the code is built, area by area** → `wiki/Code.md` (read the section before changing an area; the design page says why; run the area's checks after):
+
+| area | how it is built | decided in | checks (`test/<name>-check.js`) |
+|---|---|---|---|
+| Toolchain, schema, fold, store | `wiki/Code.md#toolchain-and-the-core` | `wiki/Architecture.md` · `wiki/Data-Model.md` | `npm test` (fold_test), storage, review, then every check |
+| Map, editor, layout, removal | `wiki/Code.md#the-map-and-the-editor-uicljs` | `wiki/UX.md` | map, editor, edit |
+| Intake chat, attachments, intake review | `wiki/Code.md#the-intake-chat-chatcljs-llmcljs` | `wiki/Authoring.md` | intake, split, steps, chat, formats, pdf, tools, locale, marks (+ ontology, interview, gaps, probe: the prompts are profile-aware) |
+| Assistant sittings | `wiki/Code.md#assistant-sittings-sessioncljs` | `wiki/Assistant-Design-2026-10-02.md` | session |
+| Demo graphs | `wiki/Code.md#demo-graphs` | `wiki/Continuous-Learning.md` | fold_test `demo-log-is-sound`; every browser check loads the SQL demo |
+| Several graphs | `wiki/Code.md#several-graphs` | `wiki/Continuous-Learning.md` §9 | graphs, catalog |
+| Publish and pin | `wiki/Code.md#publish-and-pin` | `wiki/Data-Model.md` | course, integrity, fold_test |
+| Two hats, catalog | `wiki/Code.md#two-hats` | `wiki/Continuous-Learning.md` | catalog, guide |
+| Learner loop | `wiki/Code.md#the-learner-loop-learncljs` | `wiki/MVP.md` M1–M4 | learn, integrity, catalog, exercise, marks, links |
+| Tours | `wiki/Code.md#walkthroughs-tourcljs` | `wiki/UX.md` | tour |
+| Exercises, sandboxing, bench | `wiki/Code.md#exercises-exercisecljs` | `wiki/Exercises.md` · `wiki/Security-Review-2026-10-03.md` | exercise, bench, learn |
+| Ontology profiles | `wiki/Code.md#ontology-profiles` | `wiki/Profiles.md` | ontology, fold_test |
+| Ontology import from Turtle (Protégé, TopBraid, VocBench → a profile) | `wiki/Code.md#ontology-import-turtle` | `wiki/Profiles.md` § Ontology import | import, fold_test |
+| What a model reads: descriptions, owner, inferred links, RDF export | `wiki/Code.md#what-a-model-reads` | `wiki/Profiles.md` § What a model reads | meaning, gaps, fold_test |
+| Authors: who added and changed what (`:ev/actor`, `author-named`, Settings name) | `wiki/Code.md#authors` | `wiki/Profiles.md` § What a model reads | author, fold_test |
+| Competency questions · interview · gaps card · probe | `wiki/Code.md#competency-questions` | `wiki/Profiles.md` § Competency questions | ontology, interview, gaps, probe |
+| MCP server · the loretile graph | `wiki/Code.md#the-mcp-server` | `wiki/Profiles.md` § Dogfood | `make mcp`, `build.py --check`, fold_test `loretile-graph-is-sound` |
+| The four events (answer, promote, split, deprecate) | `wiki/Code.md#the-four-events-nothing-wrote` | `wiki/Data-Model.md` | topic-actions, fold_test `the-four-events-have-guards` |
+| Tools, one assistant by screen, guide, actions | `wiki/Code.md#tools--one-assistant-mode-by-screen` | `wiki/Assistant.md` · `wiki/Assistant-Design-2026-10-02.md` | tools, guide, build |
+| Links between learning objects | `wiki/Code.md#links-between-learning-objects` | `wiki/Data-Model.md` | links |
+| Reader marks | `wiki/Code.md#reader-marks` | — | marks |
+| Token budget, key onboarding | `wiki/Code.md#token-budget` | `wiki/Ethics.md` | budget |
+| The graph as it stood: a bitemporal cut over the log (`:ev/ts` made, `:ev/recorded` taken in), a clock on the map, editing absent in the past | `wiki/Code.md#the-graph-as-it-stood` | `wiki/Data-Model.md` § Bitemporal | asof, fold_test `the-graph-as-it-stood` |
+| Merge files: a log of events on S3 under `merges/{graph-id}/`, reviewed as cards with the changes on the map | `wiki/Code.md#merge-files` | — | merge |
+| Re-upload card (sorted by quote) · staleness on material | `wiki/Code.md#re-upload-card` | `wiki/Decisions-2026-10-02.md` #7 · `wiki/Profiles.md` § Where the graph wins | reupload, version, fold_test `staleness-lives-on-material` `a-new-version-flags-only-what-changed` |
+| i18n · locale of new content | `wiki/Code.md#i18n` | `wiki/Decisions-2026-10-02.md` #12 | i18n (in `make test`), lang, locale |
+| Concept vectors | `wiki/Code.md#concept-vectors-vectorscljs` | `wiki/Vectors.md` | vectors |
+| Tests · release zip · deploy | `wiki/Code.md#tests` | — | `make smoke`, landing |
+| Building without shadow-cljs (no Clojars) | `wiki/Code.md#building-without-shadow-cljs` | — | — |
+
+- **The codebase as a graph** — `.mcp.json` serves `kg/loretile/loretile.edn` as the `loretile` MCP server with `--sources .` (run `make mcp` once; `out/` is gitignored). `describe-ontology`, then `search-nodes` / `open-node` / `list-edges` (modules, features, events, stores, gates, rules, decisions and who depends on, writes or verifies what); `read-source` / `search-sources` open the file behind a node. Ask it before grepping for "who writes this event / keeps this key / checks this feature".
+
+## Code map
+
+CLJS SPA, kintale toolchain: shadow-cljs + reagent + malli. `npm run dev` → http://localhost:8291 (`make engines` once first; `npm run dev` alone does not copy PGlite/Pyodide).
+
+- `schema.cljc` — malli event schemas, the one contract · `fold.cljc` — the KG IS a fold over events; guards run before append · `store.cljs` — event logs in localStorage, several graphs, export/import log.edn
+- `profile.cljc` — ontology profiles (`learning` built in) · `graph_tools.cljc` — the read tools shared by the in-app assistant and `mcp.cljs` (read-only stdio MCP server, `make mcp`) · `agent_md.cljc` — markdown export for an agent
+- `ui.cljs` — map, panels, course panel, catalog, `#/ontology`, `#/settings` · `chat.cljs` + `llm.cljs` — the assistant (intake, interview, gaps, probe, build-from-material), BYOK · `session.cljs` — assistant sittings
+- `learn.cljs` — learner loop as a feed · `exercise.cljs` — executed exercises (PGlite, Pyodide workers; `public/js/pyrunner.js`, `pgrunner.js`) · `tools.cljs` / `tool_defs.cljs` / `guide.cljs` — tool registry, tools, learner-mode assistant · `tour.cljs` · `vectors.cljs` · `i18n*.cljs`
+
+## Rules an edit can break
+
+- **Every event passes schema + guard before append**; imported logs are validated event by event. New event → schema, guard, fold, a writer in the UI (the loretile graph's `check-cqs` asks «which module writes this event?»).
+- **Every storage write goes through `store/write!`** (it reports failure into `last-error`; graph switches abort on a failed shelf write — a swallowed quota error once destroyed the open graph).
+- **i18n**: every UI string via `(t :ui/…)` / `(t :chat/…)` with ru+de+en; LLM prompts stay Russian, marked `;; i18n-ignore`; closed vocabularies via `i18n/enum-label`, NEVER `(name kind)` in the DOM. Gate `node test/i18n-check.js` (in `make test`).
+- **New content in the graph's language**: stamp `:locale (store/locale-for-new)`; never hardcode "ru" (a course deals only items in its own locale).
+- **Absence, never disabled**: a control that cannot act is not rendered (empty-graph rail, learning chrome on a non-learnable profile).
+- **New settings are sections of `#/settings`** (`ui/settings-page`), never modals.
+- **Learning relation ids are reserved** (`requires`, `generalizes`, `is-confused-with`, `part-of`, `see-also`) — a custom profile cannot use them. Gaps of competency questions are COMPUTED by the fold, never a model's opinion.
+- **Intake is two-step**: concepts first, then the model judges engine-proposed pairs (`fold/edge-candidates`) — never free-form edges over a document.
+- **Exercise verdicts run in a clean, locked-down worker** (`ex/judged`); never weaken the lockdown in `pyrunner.js` / `pgrunner.js` (wiki/Security-Review-2026-10-03.md).
+- **Tools show a model question counts, never stems, options or keys.** The MCP server has no write tool.
+- **Every model call goes through `llm/admit`** (daily token budget, fails closed).
+- **Generated files — edit the generator, rerun, commit the output**: demo graphs `kg/demo/build*.py` → `kg/demo/*.edn` (served as `public/demo/`) (translations inline, same ids across locales); the codebase graph `python3 kg/loretile/build.py` → `kg/loretile/loretile.edn` — `make test` runs `--check` and FAILS when it no longer matches the code (requires, event writers, storage keys, docstrings, checks). Rerun it after changing any of those.
+- **Keep `wiki/Code.md` current**: a new feature or a changed decision gets its paragraph there (and a rule here only if an edit elsewhere can break it).
+
+## Gotchas
+
+- CLJS regex literals have no `u` flag — `\p{L}` matches nothing; use explicit classes / split on spaces and punctuation.
+- A controlled input whose value flows through parent props drops fast keystrokes (the map redraws every physics tick) — `grow-textarea`, the palette's `.cmd-input`, the pencil edit forms and the add forms are semi-controlled for that reason.
+- Never deref an atom inside a lazy `for` in a render — the component never re-renders; deref once at the top.
+- The map sim measures `svg.graph`, never the first svg (rail icons are svgs). A ghost/button inside the map needs `:on-pointer-down` stopPropagation or the svg's pointer capture eats the click.
+- `loretile.export` is a reserved word in JS output — hence `agent_md.cljc`.
+
+## Tests
+
+- `make test` — fold tests (`npm test`), i18n check, the loretile graph's `--check`. `make mcp` builds + checks the MCP server. `make smoke` boots the release bundle headless.
+- Browser e2e: serve `public/` on :8291 (after `make engines`), then `node test/<name>-check.js` (needs /usr/bin/google-chrome; the list is in `wiki/Code.md` § Tests). Every browser check pins `loretile-locale=ru` and the three tour seen-flags in its localStorage setup, or the tour overlay eats its clicks. A check that uploads a non-ASCII-named fixture launches Chromium with `env: {...process.env, LANG: process.env.LANG || 'C.UTF-8'}` — with no LANG (cloud sessions) the upload silently does nothing.
+- No Clojars (cloud sessions)? `wiki/Code.md` § Building without shadow-cljs.
+
+## Release and deploy
+
+- Publishing a GitHub release runs `.github/workflows/release.yml` → `make test smoke dist dist-enterprise smoke-enterprise` → `dist/loretile-app-<tag>.zip` and `dist/loretile-app-<tag>-enterprise.zip` (no demo graphs: `<meta name="loretile-demos" content="off">` in index.html makes every demo control absent) attached to the release.
+- `make deploy` → landing at https://loretile.com + app at /app/. COMMIT BEFORE DEPLOYING — main.js is cache-busted by the git short hash and deploy refuses a dirty tree. App asset paths are document-relative. No new deps without need.
+
+**This project does not use Loom** — ignore the workspace-level Loom instructions here.

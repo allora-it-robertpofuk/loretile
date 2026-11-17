@@ -1,0 +1,111 @@
+// What a model reads off a graph (2026-10-21, after Netflix's UDA): one
+// sentence per node type and relation saying what it MEANS, who owns the
+// graph, and the graph as RDF for an organisation's own tools.
+//  - the sample ontology's descriptions arrive with the file
+//  - #/ontology: describe a relation (and clear it), set the owner
+//  - the agent export (.md) and the RDF export (.ttl) carry both
+//  - a learning graph shows no description cells (its words are built in)
+// Usage: serve public/ on :8291; node test/meaning-check.js
+const path = require('path');
+const puppeteer = require('puppeteer-core');
+const BASE = process.argv[2] || 'http://localhost:8291';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let failures = 0;
+const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); if (!ok) failures++; };
+
+(async () => {
+  const browser = await puppeteer.launch({ executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--disable-gpu'] });
+  const page = await browser.newPage();
+  page.on('pageerror', (e) => console.log('PAGE ERROR', e.message));
+  page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? 'Магазин' : undefined));
+  await page.setViewport({ width: 1280, height: 900 });
+  // every download is a Blob through URL.createObjectURL: keep the last one
+  await page.evaluateOnNewDocument(() => {
+    URL.createObjectURL = (b) => { window.__blob = b; return 'about:blank'; };
+    // and the download link's click goes nowhere (it would leave the page)
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () { if (!this.download) click.call(this); };
+  });
+  const text = (sel) => page.$eval(sel, (e) => e.textContent).catch(() => '');
+  const clear = async (sel) => {
+    await page.focus(sel);
+    await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control');
+    await page.keyboard.press('Backspace');
+  };
+  const log = () => page.evaluate(() => localStorage.getItem('loretile-kg-log') || '');
+  const download = async (sel) => {
+    await page.evaluate(() => { window.__blob = null; });
+    if (!(await page.$('.burger'))) { await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(400); }
+    await page.click('.burger'); await sleep(350);
+    await page.evaluate((sel) => document.querySelector(sel).click(), sel); await sleep(300);
+    return page.evaluate(() => (window.__blob ? window.__blob.text() : ''));
+  };
+
+  await page.goto(BASE, { waitUntil: 'networkidle0' });
+  await page.evaluate(() => {
+    localStorage.clear(); localStorage.setItem('loretile-locale', 'ru');
+    for (const k of ['loretile-tour-done', 'loretile-chat-tour-done', 'loretile-learn-tour-done']) localStorage.setItem(k, '1');
+  });
+  await page.reload({ waitUntil: 'networkidle0' }); await sleep(400);
+
+  // --- a learning graph: built-in words, no description cells -------------------
+  await page.click('.load-demo'); await sleep(1500);
+  await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' }); await sleep(300);
+  check(await page.$('.ontology-page .owner-form') !== null, 'every graph can name its owner, a learning one too');
+  check(await page.$('.ontology-page .desc-cell') === null, 'a learning graph shows no description cells');
+
+  // --- a business graph from the sample ontology --------------------------------
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.click('.burger'); await sleep(350);
+  await (await page.$('.new-graph-ontology input[type=file]')).uploadFile(path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'));
+  await sleep(800);
+  check(/:description "Роль → процесс: роль делает этот процесс/.test(await log()), 'the sample ontology\'s descriptions arrive with the file');
+  await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' }); await sleep(300);
+  const tables = await page.$$eval('table.onto', (ts) => ts.map((t) => t.textContent));
+  check(/роль делает этот процесс/.test(tables[1]), 'the relations table shows what each relation means');
+  check(/Число, по которому судят о процессе/.test(tables[0]), 'and the node types table what each type is');
+  // the stored log is EDN; an event's keys come in any order
+  const ev = (l, type, ...parts) => l.split(/(?=\{:ev\/)/).some((x) => x.includes(':ev/type ' + type) && parts.every((p) => x.includes(p)));
+
+  // describe a relation, then clear the description
+  // a description sits on its own row, right under the row of its relation
+  const rowOf = (id) => page.evaluateHandle((id) => {
+    const tr = [...document.querySelectorAll('table.onto tr')].find((r) => r.querySelector('code') && r.querySelector('code').textContent === id);
+    const next = tr && tr.nextElementSibling;
+    return next && next.classList.contains('desc-row') ? next : document.createElement('tr');
+  }, id);
+  await (await (await rowOf('measures')).asElement().$('.describe-btn')).click(); await sleep(200);
+  await clear('.describe-input');
+  await page.type('.describe-input', 'Метрика → процесс: по ней видно, хорошо ли идёт процесс.');
+  await page.click('.describe-save'); await sleep(400);
+  check(ev(await log(), ':vocabulary-described', ':of :relation', ':id :measures', ':description "Метрика → процесс: по ней видно'), 'a new description is an event in the log');
+  check(/по ней видно/.test(await (await rowOf('measures')).asElement().evaluate((tr) => tr.textContent)), 'and the row shows it');
+  await (await (await rowOf('performs')).asElement().$('.describe-btn')).click(); await sleep(200);
+  await clear('.describe-input');
+  await page.click('.describe-save'); await sleep(400);
+  check(!/роль делает этот процесс/.test(await (await rowOf('performs')).asElement().evaluate((tr) => tr.textContent)), 'an emptied description is cleared');
+  check(await page.$('table.onto tr .describe-btn') !== null && await (await rowOf('grounded-in')).asElement().$('.describe-btn') === null,
+    'the reserved source link has no pencil');
+
+  // the owner
+  await page.type('.owner-team', 'Финансы');
+  await page.type('.owner-contact', 'fin@example.com');
+  await page.click('.owner-save'); await sleep(400);
+  check(ev(await log(), ':graph-owner-set', ':team "Финансы"', ':contact "fin@example.com"'), 'the owner is an event in the log');
+  await page.reload({ waitUntil: 'networkidle0' }); await sleep(400);
+  check((await page.$eval('.owner-team', (e) => e.value)) === 'Финансы', 'and the form shows it after a reload');
+
+  // --- both exports carry the meaning and the owner ------------------------------
+  const md = await download('.drawer .export-agent');
+  check(/Owner: Финансы \(fin@example.com\)/.test(md), 'the agent export names the owner');
+  check(/`measures` измеряет \/ измеряется: Метрика → процесс: по ней видно/.test(md), 'and each relation with what it means');
+  const ttl = await download('.drawer .export-ttl');
+  check(/^@prefix rdf: /.test(ttl), 'the RDF export is Turtle');
+  check(/v:measures a owl:ObjectProperty ;[^.]*rdfs:comment "Метрика → процесс: по ней видно[^"]*"@ru/.test(ttl), 'a relation is an OWL property with its description');
+  check(/lt:team "Финансы" ; lt:contact "fin@example.com"/.test(ttl), 'the owner is in the RDF');
+  check(/v:process a owl:Class/.test(ttl) && /rdfs:domain v:metric/.test(ttl), 'types are classes, endpoints domain and range');
+
+  await browser.close();
+  console.log(failures ? 'MEANING CHECK FAILED' : 'MEANING CHECK OK');
+  process.exit(failures ? 1 : 0);
+})().catch((e) => { console.error('CHECK CRASHED', e); process.exit(1); });

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "loretile": {
+      "command": "node",
+      "args": [
+        "out/mcp.js",
+        "kg/loretile/loretile.edn",
+        "--sources",
+        "."
+      ]
+    }
+  }
+}

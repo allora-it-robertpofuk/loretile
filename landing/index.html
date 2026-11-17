@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<script>
+/* Object Storage 301s http->https, but only after one request went out in
+   the clear; the app needs a secure context (OPFS, crypto), so upgrade in
+   the page too. */
+if (location.protocol === 'http:' && location.hostname !== 'localhost'
+    && !/^127\./.test(location.hostname)) {
+  location.replace('https://' + location.host + location.pathname
+                   + location.search + location.hash);
+}
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loretile</title>
+<meta name="description" content="Loretile — обучение без пробелов: граф знаний из маленьких проверяемых идей и модель того, что вы уже знаете. Learning with no gaps.">
+<link rel="icon" type="image/svg+xml" href="/app/icon.svg">
+<style>
+/* same tokens as the app (public/css/app.css) and kintale's landing */
+:root {
+  --bg: #faf7f2; --fg: #1f1a14; --muted: #6b6156; --card: #ffffff;
+  --accent: #7a5c3e; --accent-soft: #ede4d8; --line: #e5dccf; --pill: #e7f0e2; --pill-fg: #3f6f3a;
+}
+:root[data-theme="dark"] {
+  --bg: #171310; --fg: #ece5da; --muted: #a3988a; --card: #211c17;
+  --accent: #d9b054; --accent-soft: #302a18; --line: #332c24; --pill: #223321; --pill-fg: #9dc994;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #171310; --fg: #ece5da; --muted: #a3988a; --card: #211c17;
+    --accent: #d9b054; --accent-soft: #302a18; --line: #332c24; --pill: #223321; --pill-fg: #9dc994;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  transition: background .3s, color .3s; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 20px 20px 60px; }
+.brand { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+  position: absolute; top: 12px; left: 14px; z-index: 60; height: 30px;
+  font-size: 22px; font-weight: 700; color: var(--fg); text-decoration: none; }
+.brand img { width: 28px; height: 28px; border-radius: 7px; display: block; }
+
+/* burger — the one control on the page; everything else (theme, language,
+   sections) lives in its drawer */
+#burger { position: fixed; top: 12px; right: 14px; z-index: 60;
+  border: 1px solid var(--line); background: var(--card); color: var(--fg);
+  border-radius: 9px; width: 38px; height: 34px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; }
+.scrim { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.4);
+  animation: fade .15s ease-out; }
+@keyframes fade { from { opacity: 0; } }
+@keyframes slide { from { transform: translateX(100%); } }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 95;
+  width: min(320px, 88vw); background: var(--card); border-left: 1px solid var(--line);
+  padding: 18px 20px; display: flex; flex-direction: column; gap: 18px;
+  animation: slide .18s ease-out; overflow-y: auto; }
+.drawer .dhead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; }
+.drawer .dclose { border: none; background: none; color: var(--muted); font-size: 22px; cursor: pointer; padding: 0 4px; }
+.drawer .dsec { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 8px; }
+.drawer .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.drawer button.opt { border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+  border-radius: 9px; padding: 6px 12px; cursor: pointer; font-size: 14px;
+  display: inline-flex; align-items: center; gap: 6px; }
+.drawer button.opt.on { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.drawer nav { display: flex; flex-direction: column; gap: 10px; }
+.drawer nav a { color: var(--fg); text-decoration: none; font-size: 16px; }
+.drawer nav a:hover { color: var(--accent); }
+.drawer nav a.app { font-weight: 700; color: var(--accent); }
+.drawer .dfoot { margin-top: auto; font-size: 13px; color: var(--muted); }
+
+.hero { text-align: center; padding: 84px 0 40px; }
+.pill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+  background: var(--pill); color: var(--pill-fg); white-space: nowrap; }
+.beta-card { margin: 0 auto 18px; width: fit-content; max-width: calc(100vw - 48px);
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 18px; display: flex; gap: 10px; align-items: center;
+  box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+.beta-card .bnote { font-size: 13px; color: var(--muted); }
+h1.tagline { font-family: Georgia, "Times New Roman", serif; font-weight: 500;
+  font-size: clamp(34px, 6vw, 58px); line-height: 1.18; margin: 0 auto 22px; max-width: 21ch; }
+.sub { color: var(--muted); font-size: 19px; max-width: 60ch; margin: 0 auto; }
+.cta { margin-top: 30px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-items: center; }
+.cta-btn { display: inline-block; background: var(--accent); color: var(--bg);
+  text-decoration: none; font-size: 17px; font-weight: 600; padding: 14px 34px; border-radius: 12px; }
+.cta-btn:hover { opacity: .9; }
+.cta-ghost { display: inline-block; color: var(--accent); text-decoration: none; font-size: 17px;
+  font-weight: 600; padding: 14px 22px; border: 1px solid var(--accent); border-radius: 12px; }
+.cta-ghost:hover { background: var(--accent-soft); }
+
+/* the mosaic: the product promise as geometry — tiles laid, one gap left */
+.mosaic { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
+  max-width: 420px; margin: 44px auto 0; }
+.mosaic span { aspect-ratio: 1; border-radius: 8px; background: var(--accent); opacity: .85; }
+.mosaic span:nth-child(3n) { opacity: .55; }
+.mosaic span:nth-child(5n) { opacity: .7; }
+.mosaic span.gap { background: none; border: 2px dashed var(--accent); opacity: .6; }
+.mosaic span.shaky { background: var(--accent-soft); opacity: 1; }
+
+h2.sec { font-family: Georgia, serif; font-size: clamp(26px, 4vw, 36px);
+  margin: 80px 0 24px; text-align: center; font-weight: 500; }
+.lead { text-align: center; color: var(--muted); font-size: 18px; max-width: 64ch; margin: -8px auto 26px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 26px 24px; }
+.card .ico { width: 30px; height: 30px; color: var(--accent);
+  stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.card h3 { margin: 12px 0 8px; font-size: 20px; }
+.card p { margin: 0; color: var(--muted); font-size: 15.5px; }
+.values { background: var(--accent-soft); border-radius: 20px; padding: 40px 30px; margin-top: 80px; }
+.values h2 { font-family: Georgia, serif; font-size: clamp(24px, 3.5vw, 32px); margin: 0 0 6px; text-align: center; font-weight: 500; }
+.values .vlead { text-align: center; color: var(--accent); font-size: 19px; font-weight: 600; margin: 0 0 28px; }
+.vgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 22px; }
+.vgrid h3 { margin: 0 0 6px; font-size: 17px; }
+.vgrid p { margin: 0; color: var(--muted); font-size: 15px; }
+.road { display: grid; gap: 14px; max-width: 720px; margin: 0 auto; }
+.stage { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+  padding: 22px 24px; display: flex; gap: 18px; align-items: baseline; }
+.stage .when { min-width: 86px; font-weight: 700; color: var(--accent); }
+.steps .when { min-width: 28px; }
+.stage h3 { margin: 0 0 4px; font-size: 18px; }
+.stage p { margin: 0; color: var(--muted); font-size: 15.5px; }
+footer { margin-top: 90px; padding-top: 26px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+footer .fcols { display: flex; flex-wrap: wrap; gap: 28px 56px; }
+footer .fcol { display: flex; flex-direction: column; gap: 7px; min-width: 180px; }
+footer .fcol:first-child { flex: 1 1 260px; }
+footer .fbrand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; color: var(--fg); }
+footer .fbrand img { width: 26px; height: 26px; border-radius: 6px; }
+footer a { color: var(--accent); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+footer .ver { font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .hero { padding-top: 44px; } .stage { flex-direction: column; gap: 4px; } }
+</style>
+</head>
+<body>
+<a class="brand" href="/"><img src="/app/icon.svg" alt="">Loretile</a>
+<button id="burger" aria-label="menu" aria-expanded="false" aria-controls="drawer">
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <path d="M4 7h16M4 12h16M4 17h16"/></svg>
+</button>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden>
+  <div class="dhead"><span data-i="menu_t"></span><button class="dclose" id="dclose" aria-label="close">×</button></div>
+  <div>
+    <div class="dsec" data-i="menu_theme"></div>
+    <div class="row">
+      <button class="opt" data-theme="light">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 7.3a4.7 4.7 0 1 0 0 9.4 4.7 4.7 0 0 0 0-9.4z"/><path d="M12 1.6v2.4M12 20v2.4M1.6 12h2.4M20 12h2.4M4.5 4.5l1.7 1.7M17.8 17.8l1.7 1.7M19.5 4.5l-1.7 1.7M6.2 17.8l-1.7 1.7"/></svg>
+        <span data-i="th_light"></span></button>
+      <button class="opt" data-theme="dark">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20.5 14.8A8 8 0 0 1 9.2 3.5 7 7 0 1 0 20.5 14.8z"/></svg>
+        <span data-i="th_dark"></span></button>
+      <button class="opt" data-theme="auto"><span data-i="th_auto"></span></button>
+    </div>
+  </div>
+  <div>
+    <div class="dsec" data-i="menu_lang"></div>
+    <div class="row">
+      <button class="opt" data-loc="ru">Русский</button>
+      <button class="opt" data-loc="de">Deutsch</button>
+      <button class="opt" data-loc="en">English</button>
+    </div>
+  </div>
+  <nav>
+    <a class="app" href="/app/" data-i="cta_app"></a>
+    <a href="#cases" data-i="nav_cases"></a>
+    <a href="#what" data-i="nav_what"></a>
+    <a href="#how" data-i="nav_how"></a>
+    <a href="#values" data-i="nav_val"></a>
+    <a href="#roadmap" data-i="nav_road"></a>
+  </nav>
+  <div class="dfoot"><span data-i="foot"></span> · <span class="ver"></span></div>
+</aside>
+
+<div class="wrap">
+  <div class="hero">
+    <div class="beta-card">
+      <span class="pill" data-i="pill"></span>
+      <span class="bnote" data-i="beta_note"></span>
+    </div>
+    <h1 class="tagline" data-i="tagline"></h1>
+    <p class="sub" data-i="sub"></p>
+    <div class="cta">
+      <a class="cta-btn" href="/app/" data-i="cta_app"></a>
+      <a class="cta-ghost" href="#how" data-i="cta_how"></a>
+    </div>
+    <div class="mosaic" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span><span></span>
+      <span></span><span class="shaky"></span><span></span><span></span><span></span><span></span>
+      <span></span><span></span><span></span><span class="gap"></span><span></span><span></span>
+    </div>
+  </div>
+
+  <h2 class="sec" id="cases" data-i="cases_t"></h2>
+  <p class="lead" data-i="cases_lead"></p>
+  <div class="cards">
+    <div class="card">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M12 3l9 4.5-9 4.5-9-4.5z"/><path d="M3 12l9 4.5 9-4.5"/><path d="M3 16.5L12 21l9-4.5"/></svg>
+      <h3 data-i="u1_t"></h3><p data-i="u1"></p></div>
+    <div class="card">
+      <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/><path d="M18 5l3 1-3 1"/><path d="M15 3.5l1 1.5-1 1.5"/></svg>
+      <h3 data-i="u2_t"></h3><p data-i="u2"></p></div>
+    <div class="card">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/><path d="M17 3l4 4-4 4"/></svg>
+      <h3 data-i="u3_t"></h3><p data-i="u3"></p></div>
+    <div class="card">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M21 11.5a7.5 7.5 0 0 1-7.5 7.5H8l-4 3.5V11.5A7.5 7.5 0 0 1 11.5 4h2a7.5 7.5 0 0 1 7.5 7.5z"/><path d="M9 10.5h6M9 13.5h4"/></svg>
+      <h3 data-i="u4_t"></h3><p data-i="u4"></p></div>
+  </div>
+
+  <h2 class="sec" id="what" data-i="what_t"></h2>
+  <p class="lead" data-i="what_lead"></p>
+  <div class="cards">
+    <div class="card">
+      <svg class="ico" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke-dasharray="2 2"/></svg>
+      <h3 data-i="c1_t"></h3><p data-i="c1"></p></div>
+    <div class="card">
+      <svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.8 7.8l3 7.4M16.2 7.8l-3 7.4M8.5 6h7"/></svg>
+      <h3 data-i="c2_t"></h3><p data-i="c2"></p></div>
+    <div class="card">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/><path d="M17 3l4 4-4 4"/></svg>
+      <h3 data-i="c3_t"></h3><p data-i="c3"></p></div>
+    <div class="card">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M4 5h11a3 3 0 0 1 3 3v11H7a3 3 0 0 1-3-3z"/><path d="M8 9h6M8 12.5h6M8 16h4"/></svg>
+      <h3 data-i="c4_t"></h3><p data-i="c4"></p></div>
+  </div>
+
+  <h2 class="sec" id="how" data-i="how_t"></h2>
+  <p class="lead" data-i="how_lead"></p>
+  <div class="road steps">
+    <div class="stage"><div class="when">1</div><div><h3 data-i="h1_t"></h3><p data-i="h1"></p></div></div>
+    <div class="stage"><div class="when">2</div><div><h3 data-i="h2_t"></h3><p data-i="h2"></p></div></div>
+    <div class="stage"><div class="when">3</div><div><h3 data-i="h3_t"></h3><p data-i="h3"></p></div></div>
+    <div class="stage"><div class="when">4</div><div><h3 data-i="h4_t"></h3><p data-i="h4"></p></div></div>
+  </div>
+
+  <div class="values" id="values">
+    <h2 data-i="val_t"></h2>
+    <p class="vlead" data-i="val_lead"></p>
+    <div class="vgrid">
+      <div><h3 data-i="v1_t"></h3><p data-i="v1"></p></div>
+      <div><h3 data-i="v2_t"></h3><p data-i="v2"></p></div>
+      <div><h3 data-i="v3_t"></h3><p data-i="v3"></p></div>
+      <div><h3 data-i="v4_t"></h3><p data-i="v4"></p></div>
+    </div>
+  </div>
+
+  <h2 class="sec" id="roadmap" data-i="road_t"></h2>
+  <div class="road">
+    <div class="stage"><div class="when" data-i="r1_w"></div><div><h3 data-i="r1_t"></h3><p data-i="r1"></p></div></div>
+    <div class="stage"><div class="when" data-i="r2_w"></div><div><h3 data-i="r2_t"></h3><p data-i="r2"></p></div></div>
+    <div class="stage"><div class="when" data-i="r3_w"></div><div><h3 data-i="r3_t"></h3><p data-i="r3"></p></div></div>
+  </div>
+
+  <footer>
+    <div class="fcols">
+      <div class="fcol">
+        <div class="fbrand"><img src="/app/icon.svg" alt=""> Loretile</div>
+        <div data-i="foot"></div>
+      </div>
+      <div class="fcol">
+        <a href="/app/" data-i="cta_app" style="font-weight:700"></a>
+        <a href="#cases" data-i="nav_cases"></a>
+        <a href="#what" data-i="nav_what"></a>
+        <a href="#how" data-i="nav_how"></a>
+        <a href="#values" data-i="nav_val"></a>
+        <a href="#roadmap" data-i="nav_road"></a>
+      </div>
+      <div class="fcol">
+        <a href="https://loretile.com">loretile.com</a>
+        <span class="ver" id="ver"></span>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<script>
+const T = {
+ru: {
+  menu_t: "Меню", menu_theme: "Тема", menu_lang: "Язык",
+  th_light: "Светлая", th_dark: "Тёмная", th_auto: "Как в системе",
+  cta_app: "Открыть приложение", cta_how: "Как это работает →",
+  nav_cases: "Для чего", nav_what: "Что это", nav_how: "Как работает", nav_val: "Принципы", nav_road: "Дорожная карта",
+  pill: "ранний доступ", beta_note: "собрать граф, издать курс и пройти его — всё в браузере",
+  tagline: "Учиться без пробелов",
+  sub: "Loretile — платформа обучения на графе знаний: каждая тема — одна маленькая проверяемая идея, а система помнит, что вы уже знаете. Курс о чём угодно становится вашим — и короче.",
+  cases_t: "Для чего это",
+  cases_lead: "Один граф знаний команды — и четыре вещи, которые он делает вместо четырёх отдельных инструментов.",
+  u1_t: "Курсы",
+  u1: "Курс — это цели в графе, а не плейлист. Диагностика вычитает известное, остаются только пробелы в правильном порядке, финал — без подсказок. Каждый следующий курс короче.",
+  u2_t: "Онбординг",
+  u2: "Обязательное обучение — это политика, указывающая на набор тем для роли. Новый человек в команде получает не «курс для всех», а ровно то, чего ему не хватает — и с первого дня.",
+  u3_t: "Непрерывное обучение",
+  u3: "Модель мастерства живёт между курсами. Знание не обнуляется при смене команды и не пропадает при смене курса: зачёт переносится, пробелы видны, поддержание — по мере забывания.",
+  u4_t: "Поддержка первой линии",
+  u4: "Ассистент отвечает на вопросы коллег из проверенных объектов графа — со ссылкой на источник и пониманием, что устарело. Вопрос без ответа — сигнал автору: темы не хватает.",
+  what_t: "Что такое Loretile",
+  what_lead: "Мозаика из маленьких плиток знания. Мастерство — когда в ней не осталось пропусков.",
+  c1_t: "Плитка — одна идея",
+  c1: "Не сорокаминутная лекция, а одна проверяемая мысль с объяснением, примером и вопросами. В нескольких форматах: если схема не зашла — попробуем разбор.",
+  c2_t: "Граф, а не плейлист",
+  c2: "Темы связаны зависимостями «нужно знать раньше». Ошибка внизу ведёт к настоящей причине наверху: вы не проваливаете интегралы — вы не знаете дроби.",
+  c3_t: "Память о том, что вы знаете",
+  c3: "Модель мастерства живёт между курсами и со временем угасает — как настоящая память. Каждый следующий курс короче, потому что известное вычитается.",
+  c4_t: "Курсы пишут люди",
+  c4: "ИИ помогает автору собрать граф из документов и предлагает карточки. Ничего не попадает к ученику без принятия человеком, и у каждого объекта видно, кто за ним стоит.",
+  how_t: "Как это работает",
+  how_lead: "Цель → диагностика → личный курс → проверка. И снова, пока пропусков не останется.",
+  h1_t: "Назовите цель", h1: "«Уверенно писать SQL-запросы с группировкой». Система находит нужные темы в графе и всё, что им предшествует.",
+  h2_t: "Короткая диагностика", h2: "Несколько вопросов — и понятно, что уже известно. Пробелы находятся по графу, а не угадываются.",
+  h3_t: "Курс только из пропусков", h3: "Оставшиеся темы в правильном порядке: каждая — плитка с объяснением и проверкой. Обычно это в разы короче любого готового курса.",
+  h4_t: "Честная проверка", h4: "Финальная оценка — без подсказок и без ИИ. Мастерство подтверждается тем, что вы сделали сами.",
+  val_t: "Принципы",
+  val_lead: "ИИ объясняет. Решает — не он.",
+  v1_t: "ИИ не выставляет оценок",
+  v1: "Что вы знаете, решает модель на ваших ответах — детерминированная, проверяемая. Языковая модель объясняет и спрашивает, но никогда не судит.",
+  v2_t: "Без ИИ-мусора",
+  v2: "Модель может черновик — принимает человек. У каждого объекта есть происхождение: написан, набросан, сгенерирован. Ученик видит, кто за ним стоит.",
+  v3_t: "Ваши данные — ваши",
+  v3: "История попыток и модель мастерства принадлежат вам: полный экспорт в открытых форматах, удаление — по одному запросу.",
+  v4_t: "Без псевдонауки",
+  v4: "Никаких «стилей обучения». Маршрут выбирается по тому, что сработало для вас на этой теме, — и только по этому.",
+  road_t: "Дорожная карта",
+  r1_w: "Сейчас", r1_t: "Весь цикл целиком",
+  r1: "Редактор графа и приём документов: ИИ предлагает темы и связи карточками, автор принимает. И цикл ученика: диагностика, личный курс только из пробелов, репетитор по теме, итоговая проверка без подсказок. Работает — три демо-графа внутри.",
+  r2_w: "Дальше", r2_t: "Первый настоящий курс",
+  r2: "Один живой предмет, собранный не нами, и зачёт между курсами: каждый следующий короче на то, что уже доказано.",
+  r3_w: "Потом", r3_t: "Команды и организации",
+  r3: "Общие графы знаний, онбординг как политика, поддержание знаний против забывания, поддержка первой линии на том же графе.",
+  foot: "© 2026 Loretile"
+},
+de: {
+  menu_t: "Menü", menu_theme: "Design", menu_lang: "Sprache",
+  th_light: "Hell", th_dark: "Dunkel", th_auto: "Wie das System",
+  cta_app: "App öffnen", cta_how: "So funktioniert es →",
+  nav_cases: "Wofür", nav_what: "Was es ist", nav_how: "So funktioniert es", nav_val: "Grundsätze", nav_road: "Fahrplan",
+  pill: "früher Zugang", beta_note: "Graph bauen, Kurs veröffentlichen, ihn absolvieren — alles im Browser",
+  tagline: "Lernen ohne Lücken",
+  sub: "Loretile ist eine Lernplattform auf einem Wissensgraphen: jedes Thema ist eine kleine, prüfbare Idee, und das System merkt sich, was Sie schon können. Ein Kurs über irgendetwas wird zu Ihrem — und kürzer.",
+  cases_t: "Wofür es ist",
+  cases_lead: "Ein Wissensgraph des Teams — und vier Dinge, die er statt vier getrennter Werkzeuge erledigt.",
+  u1_t: "Kurse",
+  u1: "Ein Kurs ist ein Satz Ziele im Graphen, keine Playlist. Die Diagnose zieht Bekanntes ab, es bleiben nur Lücken in der richtigen Reihenfolge, die Prüfung kommt ohne Hinweise. Jeder nächste Kurs ist kürzer.",
+  u2_t: "Onboarding",
+  u2: "Pflichtschulung ist eine Richtlinie, die auf ein Themenset für eine Rolle zeigt. Wer neu ins Team kommt, bekommt keinen „Kurs für alle“, sondern genau das, was fehlt — ab dem ersten Tag.",
+  u3_t: "Kontinuierliches Lernen",
+  u3: "Das Meisterschaftsmodell lebt zwischen den Kursen. Wissen wird beim Teamwechsel nicht auf null gesetzt und geht beim Kurswechsel nicht verloren: Anrechnung wandert mit, Lücken bleiben sichtbar, Auffrischung folgt dem Vergessen.",
+  u4_t: "First-Level-Support",
+  u4: "Der Assistent beantwortet Fragen von Kolleginnen und Kollegen aus geprüften Objekten des Graphen — mit Quellenangabe und dem Wissen, was veraltet ist. Eine Frage ohne Antwort ist ein Signal an die Autoren: ein Thema fehlt.",
+  what_t: "Was Loretile ist",
+  what_lead: "Ein Mosaik aus kleinen Wissenskacheln. Meisterschaft heißt: keine Lücke mehr.",
+  c1_t: "Eine Kachel, eine Idee",
+  c1: "Keine 40-Minuten-Vorlesung, sondern ein prüfbarer Gedanke mit Erklärung, Beispiel und Fragen. In mehreren Formaten: wenn das Diagramm nicht zündet, kommt das Beispiel.",
+  c2_t: "Ein Graph, keine Playlist",
+  c2: "Themen hängen über „muss vorher bekannt sein“ zusammen. Ein Fehler unten führt zur echten Ursache oben: Sie scheitern nicht an Integralen — Sie kennen die Brüche nicht.",
+  c3_t: "Ein Gedächtnis für Ihr Wissen",
+  c3: "Das Meisterschaftsmodell lebt zwischen den Kursen und verblasst mit der Zeit — wie echtes Gedächtnis. Jeder nächste Kurs ist kürzer, weil Bekanntes abgezogen wird.",
+  c4_t: "Kurse schreiben Menschen",
+  c4: "Die KI hilft dem Autor, aus Dokumenten einen Graphen zu bauen, und schlägt Karten vor. Nichts erreicht Lernende ohne menschliche Freigabe, und jedes Objekt zeigt, wer dahintersteht.",
+  how_t: "So funktioniert es",
+  how_lead: "Ziel → Diagnose → persönlicher Kurs → Prüfung. Und wieder, bis keine Lücke bleibt.",
+  h1_t: "Nennen Sie ein Ziel", h1: "„SQL-Abfragen mit Gruppierung sicher schreiben.“ Das System findet die Zielthemen im Graphen und alles, was ihnen vorausgeht.",
+  h2_t: "Kurze Diagnose", h2: "Ein paar Fragen — und klar ist, was schon sitzt. Lücken werden über den Graphen gefunden, nicht geraten.",
+  h3_t: "Ein Kurs nur aus Lücken", h3: "Die verbleibenden Themen in der richtigen Reihenfolge: jedes eine Kachel mit Erklärung und Prüfung. Meist um ein Vielfaches kürzer als jeder fertige Kurs.",
+  h4_t: "Ehrliche Prüfung", h4: "Die Abschlussbewertung — ohne Hinweise, ohne KI. Meisterschaft wird durch das belegt, was Sie selbst geschafft haben.",
+  val_t: "Grundsätze",
+  val_lead: "Die KI erklärt. Entscheiden tut sie nicht.",
+  v1_t: "Die KI benotet nicht",
+  v1: "Was Sie wissen, entscheidet ein Modell über Ihren Antworten — deterministisch, nachprüfbar. Das Sprachmodell erklärt und fragt, urteilt aber nie.",
+  v2_t: "Kein KI-Schrott",
+  v2: "Das Modell darf entwerfen — ein Mensch nimmt an. Jedes Objekt hat eine Herkunft: geschrieben, entworfen, generiert. Lernende sehen, wer dahintersteht.",
+  v3_t: "Ihre Daten gehören Ihnen",
+  v3: "Versuchshistorie und Meisterschaftsmodell sind Ihre: vollständiger Export in offenen Formaten, Löschung auf eine Anfrage.",
+  v4_t: "Keine Pseudowissenschaft",
+  v4: "Keine „Lerntypen“. Die Route folgt dem, was bei Ihnen zu diesem Thema funktioniert hat — und nur dem.",
+  road_t: "Fahrplan",
+  r1_w: "Jetzt", r1_t: "Der ganze Zyklus",
+  r1: "Graph-Editor und Dokumenten-Aufnahme: die KI schlägt Themen und Kanten als Karten vor, der Autor nimmt an. Und der Lernzyklus: Diagnose, ein persönlicher Kurs nur aus Lücken, ein Tutor zum Thema, eine Abschlussprüfung ohne Hinweise. Läuft — mit drei Demo-Graphen.",
+  r2_w: "Als Nächstes", r2_t: "Der erste echte Kurs",
+  r2: "Ein lebendiges Fach, nicht von uns gebaut, und Anrechnung zwischen Kursen: jeder weitere Kurs kürzer um das, was schon bewiesen ist.",
+  r3_w: "Später", r3_t: "Teams und Organisationen",
+  r3: "Geteilte Wissensgraphen, Onboarding als Richtlinie, Erhalt gegen das Vergessen, First-Level-Support auf demselben Graphen.",
+  foot: "© 2026 Loretile"
+},
+en: {
+  menu_t: "Menu", menu_theme: "Theme", menu_lang: "Language",
+  th_light: "Light", th_dark: "Dark", th_auto: "System",
+  cta_app: "Open the app", cta_how: "How it works →",
+  nav_cases: "What for", nav_what: "What it is", nav_how: "How it works", nav_val: "Principles", nav_road: "Roadmap",
+  pill: "early access", beta_note: "build the graph, publish a course, take it — all in the browser",
+  tagline: "Learning with no gaps",
+  sub: "Loretile is a learning platform built on a knowledge graph: every topic is one small testable idea, and the system remembers what you already know. A course about anything becomes yours — and shorter.",
+  cases_t: "What it is for",
+  cases_lead: "One knowledge graph per team — and four things it does instead of four separate tools.",
+  u1_t: "Courses",
+  u1: "A course is a set of targets in the graph, not a playlist. The diagnostic subtracts what you know, only the gaps remain in the right order, the final comes without hints. Every next course is shorter.",
+  u2_t: "Onboarding",
+  u2: "Mandatory training is a policy pointing at a topic set for a role. Someone joining the team gets not a course for everyone but exactly what they are missing — from day one.",
+  u3_t: "Continuous learning",
+  u3: "The mastery model lives between courses. Knowledge is not reset when you change teams and not lost when you change courses: credit carries over, gaps stay visible, maintenance follows forgetting.",
+  u4_t: "First-level support",
+  u4: "The assistant answers colleagues' questions from vetted objects in the graph — citing the source and knowing what is stale. A question with no answer is a signal to the authors: a topic is missing.",
+  what_t: "What Loretile is",
+  what_lead: "A mosaic of small tiles of knowledge. Mastery is when no gap is left.",
+  c1_t: "One tile, one idea",
+  c1: "Not a forty-minute lecture but one testable thought with an explanation, an example and questions. In several formats: if the diagram didn't land, try the worked example.",
+  c2_t: "A graph, not a playlist",
+  c2: "Topics are linked by “must know first”. A failure downstream leads to the real cause upstream: you don't fail integrals — you don't know fractions.",
+  c3_t: "A memory of what you know",
+  c3: "The mastery model lives between courses and fades over time — like real memory. Every next course is shorter, because what you know is subtracted.",
+  c4_t: "Courses are written by people",
+  c4: "The AI helps an author build the graph from documents and proposes cards. Nothing reaches a learner without a human accepting it, and every object shows who stands behind it.",
+  how_t: "How it works",
+  how_lead: "Goal → diagnosis → personal course → assessment. Then again, until no gap is left.",
+  h1_t: "Name a goal", h1: "“Write SQL queries with grouping confidently.” The system finds the target topics in the graph and everything that comes before them.",
+  h2_t: "A short diagnosis", h2: "A few questions — and it is clear what you already know. Gaps are found through the graph, not guessed.",
+  h3_t: "A course made only of gaps", h3: "The remaining topics in the right order, each a tile with an explanation and a check. Usually several times shorter than any published course.",
+  h4_t: "An honest assessment", h4: "The final check — no hints, no AI. Mastery is proven by what you did on your own.",
+  val_t: "Principles",
+  val_lead: "The AI explains. It does not decide.",
+  v1_t: "The AI never grades",
+  v1: "What you know is decided by a model fit to your answers — deterministic, auditable. The language model explains and asks, but never judges.",
+  v2_t: "No AI slop",
+  v2: "The model may draft; a human accepts. Every object carries its origin: authored, drafted, generated. Learners see who stands behind it.",
+  v3_t: "Your data is yours",
+  v3: "Your attempt history and mastery model belong to you: full export in open formats, deletion on a single request.",
+  v4_t: "No pseudoscience",
+  v4: "No “learning styles”. The route follows what actually worked for you on this topic — and nothing else.",
+  road_t: "Roadmap",
+  r1_w: "Now", r1_t: "The whole loop",
+  r1: "Graph editor and document intake: the AI proposes topics and edges as cards, the author accepts. And the learner loop: a diagnostic, a personal course made only of your gaps, a tutor on the topic, a final check without hints. Working, with three demo graphs inside.",
+  r2_w: "Next", r2_t: "The first real course",
+  r2: "One living subject, not built by us, and credit across courses: every next course shorter by what you have already proven.",
+  r3_w: "Later", r3_t: "Teams and organisations",
+  r3: "Shared knowledge graphs, onboarding as a policy, maintenance against forgetting, first-level support on the same graph.",
+  foot: "© 2026 Loretile"
+}};
+
+const LS_LOC = "loretile-locale", LS_THEME = "loretile-theme";
+const pick = () => {
+  const saved = localStorage.getItem(LS_LOC);
+  if (T[saved]) return saved;
+  for (const l of (navigator.languages || [navigator.language])) {
+    const c = (l || "").slice(0, 2).toLowerCase();
+    if (T[c]) return c;
+  }
+  return "en";
+};
+let loc = pick();
+const apply = () => {
+  document.documentElement.lang = loc;
+  document.querySelectorAll("[data-i]").forEach(el => { el.textContent = T[loc][el.dataset.i] || ""; });
+  document.querySelectorAll("[data-loc]").forEach(b => b.classList.toggle("on", b.dataset.loc === loc));
+  const th = localStorage.getItem(LS_THEME) || "auto";
+  document.querySelectorAll("[data-theme]").forEach(b => b.classList.toggle("on", b.dataset.theme === th));
+};
+document.querySelectorAll("[data-loc]").forEach(b =>
+  b.addEventListener("click", () => { loc = b.dataset.loc; localStorage.setItem(LS_LOC, loc); apply(); }));
+
+const savedTheme = localStorage.getItem(LS_THEME);
+if (savedTheme && savedTheme !== "auto") document.documentElement.dataset.theme = savedTheme;
+document.querySelectorAll("[data-theme]").forEach(b =>
+  b.addEventListener("click", () => {
+    const t = b.dataset.theme;
+    if (t === "auto") { delete document.documentElement.dataset.theme; localStorage.removeItem(LS_THEME); }
+    else { document.documentElement.dataset.theme = t; localStorage.setItem(LS_THEME, t); }
+    apply();
+  }));
+
+const drawer = document.getElementById("drawer"), scrim = document.getElementById("scrim"),
+      burger = document.getElementById("burger");
+const setMenu = open => {
+  drawer.hidden = !open; scrim.hidden = !open;
+  burger.setAttribute("aria-expanded", String(open));
+};
+burger.addEventListener("click", () => setMenu(drawer.hidden));
+document.getElementById("dclose").addEventListener("click", () => setMenu(false));
+scrim.addEventListener("click", () => setMenu(false));
+drawer.querySelectorAll("nav a").forEach(a => a.addEventListener("click", () => setMenu(false)));
+document.addEventListener("keydown", e => { if (e.key === "Escape") setMenu(false); });
+
+const VER = "@VERSION@";
+document.querySelectorAll(".ver").forEach(el => { el.textContent = "v " + (VER.startsWith("@") ? "dev" : VER); });
+apply();
+</script>
+</body>
+</html>

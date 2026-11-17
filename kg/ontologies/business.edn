@@ -1,0 +1,60 @@
+;; An ontology profile (wiki/Profiles.md): the vocabulary a graph is written
+;; in. Drawer → «Новый граф по онтологии…» → this file → a graph whose map,
+;; assistant and export speak it. Copy and edit; ids are keywords, labels
+;; are your words in your language. Rules the app enforces:
+;;   - exactly ONE relation is :ordering? (the layers layout columns by it;
+;;     it must stay acyclic). It reads from the LATER node to the EARLIER
+;;     one, like `requires` in a learning graph: «B is triggered by A» is
+;;     the edge B → A. Name it that way round, or every agent reading the
+;;     graph reads the order backwards;
+;;   - :from / :to name node types from :node-types (absent = any);
+;;   - requires, generalizes, is-confused-with, part-of, see-also are
+;;     reserved for the learning engine and cannot be used here;
+;;   - grounded-in (node → source) is added to every profile automatically.
+{:id "business"
+ :title "Как работает компания"
+ :brief "Процессы компании, кто их выполняет, в каких системах они идут и какими правилами ограничены."
+ :node-types [{:id :process :label "процесс" :color "#4f7cff"
+               :description "Последовательность действий, которую выполняет компания: закупка, оплата счёта, найм."}
+              {:id :role :label "роль" :color "#2fa36b"
+               :description "Человек, должность или команда, которые отвечают за процесс или выполняют его."}
+              {:id :system :label "система" :color "#8a63d2"
+               :description "Программа или сервис, в которых идёт работа: Coupa, NetSuite, Slack."}
+              {:id :rule :label "правило" :color "#d9822b"
+               :description "Обязательное условие: порог суммы, требование согласования, запрет."}
+              {:id :entity :label "сущность" :color "#6b7f99"
+               :description "Документ или запись, которые процесс создаёт или использует: заявка, счёт, договор."}
+              {:id :decision :label "решение" :color "#c94f7c"
+               :description "Принятое решение с причиной: почему правило или процесс устроены именно так."}
+              {:id :metric :label "метрика" :color "#2aa7b8"
+               :description "Число, по которому судят о процессе: срок, доля, сумма."}]
+ :relations [{:id :triggers :label "запускается после" :inverse "запускает"
+              :from #{:process} :to #{:process} :ordering? true
+              :description "A → B: A начинается, когда закончился B; B идёт раньше. Это порядок шагов."}
+             {:id :depends-on :label "зависит от" :inverse "нужна для"
+              :from #{:process :system} :to #{:system} :acyclic? true
+              :description "A → B: A не работает без системы B."}
+             {:id :owns :label "владеет" :inverse "владелец"
+              :from #{:role} :to #{:process :entity :metric}
+              :description "Роль → X: роль отвечает за процесс, сущность или метрику."}
+             {:id :performs :label "выполняет" :inverse "выполняется"
+              :from #{:role} :to #{:process}
+              :description "Роль → процесс: роль делает этот процесс (не обязательно отвечает за него)."}
+             {:id :produces :label "создаёт" :inverse "создаётся в"
+              :from #{:process} :to #{:entity}
+              :description "Процесс → сущность: процесс создаёт этот документ или запись."}
+             {:id :consumes :label "использует" :inverse "используется в"
+              :from #{:process} :to #{:entity}
+              :description "Процесс → сущность: процессу нужен этот документ или запись на входе."}
+             {:id :runs-in :label "идёт в системе" :inverse "обслуживает"
+              :from #{:process} :to #{:system}
+              :description "Процесс → система: процесс идёт в этой системе."}
+             {:id :governed-by :label "регулируется" :inverse "регулирует"
+              :from #{:process :entity} :to #{:rule}
+              :description "X → правило: процесс или сущность подчиняются правилу."}
+             {:id :decided-by :label "решено в" :inverse "решает"
+              :from #{:process :rule} :to #{:decision}
+              :description "X → решение: процесс или правило устроены так по этому решению."}
+             {:id :measures :label "измеряет" :inverse "измеряется"
+              :from #{:metric} :to #{:process}
+              :description "Метрика → процесс: метрика говорит, хорошо ли идёт процесс."}]}

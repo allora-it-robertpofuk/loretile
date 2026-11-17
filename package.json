@@ -1,0 +1,26 @@
+{
+  "name": "loretile",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "description": "Loretile: knowledge-graph learning platform (ClojureScript SPA)",
+  "scripts": {
+    "dev": "shadow-cljs watch app",
+    "build": "shadow-cljs release app",
+    "test": "shadow-cljs compile test && node out/test.js",
+    "mcp": "shadow-cljs release mcp"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "d3-force-3d": "^3.0.6",
+    "driver.js": "^1.8.0",
+    "pdfjs-dist": "^6.3.289",
+    "pyodide": "^314.0.6",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.3.0",
+    "shadow-cljs": "3.3.5"
+  }
+}
