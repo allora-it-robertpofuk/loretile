@@ -83,6 +83,7 @@ CLJS SPA, kintale toolchain: shadow-cljs + reagent + malli. `npm run dev` → ht
 ## Release and deploy
 
 - Publishing a GitHub release runs `.github/workflows/release.yml` → `make test smoke dist dist-enterprise smoke-enterprise` → `dist/loretile-app-<tag>.zip` and `dist/loretile-app-<tag>-enterprise.zip` (no demo graphs: `<meta name="loretile-demos" content="off">` in index.html makes every demo control absent) attached to the release.
+- `.github/workflows/build.yml` (public repo only): every push to master there — i.e. every `make publish` — tags `0.{commits}.{n}`, runs the same gates, and releases both bundles as tar.gz; a failed build drops its tag.
 - `make deploy` → landing at https://loretile.com + app at /app/. COMMIT BEFORE DEPLOYING — main.js is cache-busted by the git short hash and deploy refuses a dirty tree. App asset paths are document-relative. No new deps without need.
 
 **This project does not use Loom** — ignore the workspace-level Loom instructions here.
