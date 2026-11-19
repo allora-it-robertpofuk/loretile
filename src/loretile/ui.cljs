@@ -28,8 +28,24 @@
 
 (defn goto! [hash] (set! js/location.hash hash))
 
+(defn- deep-link!
+  "#/g/{graph}[/c/{node}]: open that graph, then the plain route it stands
+   for, written back with replaceState (Back leaves the link, no loop). A
+   graph not on this device gives «not found», never a same-slug node of the
+   open graph: slugs mean nothing between graphs."
+  [g node]
+  (let [g (js/decodeURIComponent g)]
+    (when (and (not= g @store/current) (some #(= g (:id %)) @store/graphs))
+      (store/switch-graph! g))
+    (let [plain (cond (not= g @store/current) "#/c/"
+                      node (str "#/c/" node)
+                      :else "#/")]
+      (.replaceState js/history nil "" plain)
+      plain)))
+
 (defn read-route! []
-  (let [h (or js/location.hash "")]
+  (let [h (or js/location.hash "")
+        h (if-let [[_ g node] (re-find #"^#/g/([^/]+)(?:/c/(.+))?$" h)] (deep-link! g node) h)]
     (reset! route
             (cond
               (str/starts-with? h "#/c/") {:view :concept :id (js/decodeURIComponent (subs h 4))}

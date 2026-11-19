@@ -86,6 +86,29 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   await sleep(700);
   check(await nodes() === 1, 'and my own graph kept its topic');
 
+  // deep link #/g/{graph}/c/{node}: opens that graph and the node in it
+  const sqlId = await page.evaluate(() => {
+    const row = (localStorage.getItem('loretile-graphs').match(/\{[^}]*\}/g) || []).find((e) => /SQL|аналитик/.test(e));
+    return ((row || '').match(/:id "([^"]+)"/) || [])[1];
+  });
+  check(!!sqlId, `the SQL demo has a graph id (${sqlId})`);
+  await page.evaluate((g) => { location.hash = '#/g/' + encodeURIComponent(g) + '/c/group-by'; }, sqlId);
+  await sleep(900);
+  check(await nodes() === demoNodes, 'the deep link switched to its graph');
+  check(/GROUP BY/.test(await page.$eval('.panel-head h2', (e) => e.textContent).catch(() => '')),
+    'and opened the node');
+  check(await page.evaluate(() => location.hash) === '#/c/group-by', 'the address became the plain node route');
+  await page.evaluate(() => { location.hash = '#/g/no-such-graph/c/group-by'; });
+  await sleep(500);
+  check(await nodes() === demoNodes, 'an unknown graph switches nothing');
+  check(await page.$eval('.panel', (e) => e.textContent).then((t) => !/GROUP BY/.test(t)).catch(() => true),
+    'and never shows a same-slug node of the open graph');
+  await page.evaluate(() => { location.hash = '#/'; });
+  await openDrawer();
+  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')]
+    .find((e) => /Мой учебник/.test(e.textContent)).click());
+  await sleep(700);
+
   // --- publish and pin -------------------------------------------------------
   // start a run on the demo course, then edit that course's graph at HEAD and
   // prove the run in flight does not see the material change
