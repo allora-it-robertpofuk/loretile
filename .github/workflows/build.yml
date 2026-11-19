@@ -1,5 +1,5 @@
 # Every push to master becomes a release 0.{commits from root}.{tags on this
-# commit + 1}: the commit is tagged first, then built and gated like
+# commit}: the commit is tagged first, then built and gated like
 # release.yml, and both bundles are attached as tar.gz.
 name: Build release
 
@@ -32,7 +32,7 @@ jobs:
         run: |
           commits=$(git rev-list --count HEAD)
           tags=$(git tag --points-at HEAD | wc -l)
-          version="0.${commits}.$((tags + 1))"
+          version="0.${commits}.${tags}"
           git config user.name "github-actions[bot]"
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
           git tag -a "$version" -m "Release $version"
