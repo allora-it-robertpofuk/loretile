@@ -2,7 +2,22 @@
   "Intake chat strings (:chat/…). Every entry carries ru, de AND en — test/i18n-check.js fails otherwise. LLM PROMPTS are not here: they stay in chat.cljs, the model reads them, not the user.")
 
 (def strings
-  {:chat/doc-read {:ru "Прочитан «{name}»: " :de "„{name}“ gelesen: " :en "Read \"{name}\": "}
+  {;; documents into an ontology graph (wiki/Ontology-Graph.md slice 3)
+   :chat/accept-all-types {:ru "Принять все типы ({n})" :de "Alle Typen annehmen ({n})" :en "Accept all types ({n})"}
+   :chat/accept-all-relations {:ru "Принять все связи ({n})" :de "Alle Beziehungen annehmen ({n})" :en "Accept all relations ({n})"}
+   :chat/triage-tag {:ru "что это за документ?" :de "Was ist das für ein Dokument?" :en "what is this document?"}
+   :chat/triage-q {:ru "«{name}» — это…" :de "„{name}“ ist…" :en "\"{name}\" is…"}
+   :chat/triage-ontology {:ru "онтология — виды вещей и как они связаны" :de "eine Ontologie — Arten von Dingen und wie sie zusammenhängen" :en "an ontology — kinds of things and how they relate"}
+   :chat/triage-content {:ru "содержимое графа — сами вещи и факты" :de "Inhalt für einen Graphen — die Dinge selbst und Fakten" :en "content for a graph — the things themselves and facts"}
+   :chat/triage-which {:ru "по какой онтологии" :de "nach welcher Ontologie" :en "on which ontology"}
+   :chat/triage-learning {:ru "Обучение (встроенная)" :de "Lernen (eingebaut)" :en "Learning (built in)"}
+   :chat/triage-go {:ru "Продолжить" :de "Weiter" :en "Continue"}
+   :chat/type-tag {:ru "тип" :de "Typ" :en "type"}
+   :chat/relation-tag {:ru "связь онтологии" :de "Beziehung der Ontologie" :en "ontology relation"}
+   :chat/vocab-exists {:ru "Такой тип уже есть — принять значит обновить его слова." :de "Diesen Typ gibt es schon — annehmen aktualisiert seine Wörter." :en "This type exists — accepting updates its words."}
+   :chat/vocab-proposed {:ru "Предложено типов: {t}, связей: {r}. Примите нужные — связь приводит свои типы с собой." :de "Vorgeschlagen: {t} Typen, {r} Beziehungen. Nehmen Sie an, was passt — eine Beziehung bringt ihre Typen mit." :en "Proposed: {t} types, {r} relations. Accept what fits — a relation brings its types along."}
+   :chat/vocab-file-elsewhere {:ru "Это файл онтологии — откройте граф-онтологию (или создайте его) и отдайте файл туда." :de "Das ist eine Ontologie-Datei — öffnen Sie einen Ontologie-Graphen (oder legen Sie einen an) und geben Sie die Datei dort ab." :en "This is an ontology file — open an ontology graph (or make one) and drop the file there."}
+   :chat/doc-read {:ru "Прочитан «{name}»: " :de "„{name}“ gelesen: " :en "Read \"{name}\": "}
    :chat/doc-pages {:ru "{n} стр., " :de "{n} S., " :en "{n} pg., "}
    :chat/doc-chars {:ru "{n} знаков" :de "{n} Zeichen" :en "{n} characters"}
    :chat/doc-truncated {:ru "; в модель уйдут первые {n}"

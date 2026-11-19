@@ -6,6 +6,7 @@
 // zips (deflated, as Word writes, and stored, as some tools do).
 // Usage: serve public/ on :8291; node test/formats-check.js
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -102,6 +103,7 @@ fs.writeFileSync(HTML, `<!doctype html><html><head><title>t</title><style>.x{col
     await page.evaluate(() => { window.__sent = []; });
     await (await page.$('.composer input[type=file]')).uploadFile(file); await sleep(500);
     await page.click('.composer .chat-sendbtn');
+    await G.passTriage(page);   // nothing open yet: the one door asks first
     for (let i = 0; i < 40 && !(await page.evaluate(() => window.__sent.length)); i++) await sleep(150);
     await sleep(300);
     return page.evaluate(() => window.__sent.join('\n'));

@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const BASE = process.argv[2] || 'http://localhost:8291';
 const CHROME = process.env.CHROME_BIN || '/usr/bin/google-chrome';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -111,6 +112,7 @@ const MOCK_OPS = {
 
   // send with the doc only (no typed text)
   await page.click('.composer button.primary');
+  await G.passTriage(page);   // nothing open yet: the one door asks first
   await sleep(500);
   const sent = await page.evaluate(() => window.__llmCalls[0].messages[0].content);
   check(/\[стр\. 1\] GROUP BY puts rows into buckets/.test(sent), 'page-1 text with marker sent to LLM');

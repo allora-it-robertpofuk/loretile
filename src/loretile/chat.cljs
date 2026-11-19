@@ -267,7 +267,7 @@
 
 (def accept-types
   "What the file picker offers — the formats `read-file` can turn into text."
-  ".md,.markdown,.txt,.pdf,.docx,.html,.htm")
+  ".md,.markdown,.txt,.pdf,.docx,.html,.htm,.ttl,.edn")
 
 (defn- zip-entry
   "One file out of a zip archive (a .docx is one), with the browser's own
@@ -375,7 +375,7 @@
   (let [n (.-name file)]
     (cond
       (re-find #"(?i)\.pdf$" n) (extract-pdf! file)
-      (re-find #"(?i)\.(md|markdown|txt)$" n) (p/then (.text file) (fn [s] {:name n :text s}))
+      (re-find #"(?i)\.(md|markdown|txt|ttl|edn)$" n) (p/then (.text file) (fn [s] {:name n :text s}))
       (re-find #"(?i)\.docx$" n)
       (p/let [buf (.arrayBuffer file)
               xml (zip-entry buf "word/document.xml")
@@ -951,6 +951,259 @@
 
 (declare ontology-turn!)
 
+;; --- documents into an ontology graph (wiki/Ontology-Graph.md slice 3) --------
+;; With a graph on the types ontology open, a document is read for KINDS OF
+;; THINGS and HOW THEY RELATE: type cards and relation cards. Accepting writes
+;; the property-graph ops — a type is a node, a relation an edge between two
+;; types with its words as properties; a relation card brings its two types
+;; along when they are not in the graph yet, so the order of accepts does not
+;; matter. A Turtle or Loretile edn file is read by code, not by a model.
+
+(defn ontology-file? [d] (boolean (re-find #"(?i)\.(ttl|edn)$" (str (:name d)))))
+
+(def ^:private vocab-instruction
+  (str
+   ;; i18n-ignore
+   "Ты помогаешь построить онтологию — словарь предметной области: ВИДЫ вещей (типы узлов) и то, как они СВЯЗАНЫ (связи между типами)." "\n"
+   ;; i18n-ignore
+   "Не перечисляй конкретные экземпляры (не «Иван Петров», а «сотрудник»; не «счёт №42», а «счёт»). Типов 3–15, связей столько, сколько материал называет." "\n"
+   ;; i18n-ignore
+   "Связь читается от `from` к `to` («роль выполняет процесс»: from=роль, to=процесс); inverse — как она читается обратно." "\n"
+   ;; i18n-ignore
+   "Ответь ТОЛЬКО JSON:" "\n"
+   ;; i18n-ignore
+   "{\"types\":[{\"id\":\"slug\",\"label\":\"как называется\",\"description\":\"одно предложение: что это\",\"evidence\":\"цитата из материала\"}]," "\n"
+   ;; i18n-ignore
+   " \"relations\":[{\"id\":\"slug\",\"label\":\"как читается\",\"inverse\":\"как читается обратно\",\"from\":\"id типа\",\"to\":\"id типа\",\"description\":\"одно предложение\",\"evidence\":\"цитата\"}]," "\n"
+   ;; i18n-ignore
+   " \"note\":\"коротко: что это за материал\"}" "\n"
+   ;; i18n-ignore
+   "Если тип или связь уже есть в онтологии — используй ТОТ ЖЕ id. Не используй id requires, generalizes, is-confused-with, part-of, see-also."))
+
+(defn- vocab-cards
+  "A vocabulary — the model's or a parsed file's — as type and relation
+   cards. Relations name their ends by id; titles ride along so an accept
+   can bring a missing type with it. Reserved ids never become cards."
+  [types relations kg]
+  (let [tid #(let [s (str/trim (str %))] (when (seq s) s))
+        titles (merge (into {} (for [[id c] (:concepts kg)] [id (:title c)]))
+                      (into {} (for [t types :let [id (tid (:id t))] :when id] [id (or (not-empty (:label t)) id)])))
+        reserved (set (map name (profile/reserved-ids)))]
+    (concat
+     (for [t types :let [id (tid (:id t))] :when id]
+       {:card :type
+        :data (cond-> {:id id :title (or (not-empty (:label t)) id) :definition (or (:description t) "")}
+                (seq (:evidence t)) (assoc :evidence (:evidence t))
+                (:color t) (assoc :color (:color t))
+                (:icon t) (assoc :icon (:icon t))
+                (:learnable? t) (assoc :learnable? true))})
+     (for [r relations
+           :let [id (tid (:id r)) from (tid (:from r)) to (tid (:to r))]
+           :when (and id from to (not (reserved id)) (not= "grounded-in" id))]
+       {:card :relation
+        :data (cond-> {:id id :from from :to to :label (or (not-empty (:label r)) id)
+                       :from-title (get titles from from) :to-title (get titles to to)}
+                (seq (:inverse r)) (assoc :inverse (:inverse r))
+                (seq (:description r)) (assoc :description (:description r))
+                (seq (:evidence r)) (assoc :evidence (:evidence r))
+                (:ordering? r) (assoc :ordering? true)
+                (:acyclic? r) (assoc :acyclic? true))}))))
+
+(defn- profile->cards
+  "A parsed ontology file's profile → the same cards (one relation card per
+   from → to pair it allows)."
+  [p kg]
+  (vocab-cards (for [t (:node-types p)] (assoc t :id (name (:id t))))
+               (for [r (:relations p) :when (not= :grounded-in (:id r)) f (:from r) to (:to r)]
+                 (assoc r :id (name (:id r)) :from (name f) :to (name to)))
+               kg))
+
+(defn- vocab-event
+  "The `change` a type or relation card writes when accepted."
+  [{:keys [card data]} kg]
+  (case card
+    :type {:ev/type :change
+           :ops [[:node-set (:id data) (select-keys data [:title :definition :color :icon :learnable?])]]}
+    :relation (let [{:keys [id from to from-title to-title]} data
+                    missing (fn [n t] (when-not (get-in kg [:concepts n]) [[:node-set n {:title (or t n)}]]))]
+                {:ev/type :change
+                 :ops (vec (concat (missing from from-title)
+                                   (when (not= from to) (missing to to-title))
+                                   [[:edge-set from (keyword id) to
+                                     (select-keys data [:label :inverse :description :ordering? :acyclic?])]]))})))
+
+(defn- ontology-intake!
+  "A document (or typed text) into the open ontology graph: a Turtle/edn file
+   is parsed; anything else is read by the model, part by part."
+  [home d text]
+  ;; nil text = the triage card already showed this drop
+  (when (some? text)
+    (swap! msgs conj {:who :user :text (cond-> text d (str (when (seq text) "\n") (t :chat/file-tag) (:name d)))}))
+  (reset! graph home) (reset! doc nil)
+  (when (empty? @cards) (reset! decided 0))
+  (if (and d (ontology-file? d))
+    (let [{:keys [profile error]} (store/read-profile (:text d) (:name d))]
+      (if error
+        (swap! msgs conj {:who :sys :text (str (t :chat/error-prefix) (pr-str (:detail error)))})
+        (let [cs (profile->cards profile (store/kg))]
+          (swap! cards into cs)
+          (swap! msgs conj {:who :llm :text (t :chat/vocab-proposed {"{t}" (count (filter #(= :type (:card %)) cs))
+                                                                   "{r}" (count (filter #(= :relation (:card %)) cs))})}))))
+    (let [parts (if d (fold/text-chunks (:text d) chunk-chars) [{:text text}])
+          known (fn [] (let [v (fold/defined (store/kg))]
+                         ;; i18n-ignore
+                         (str "\n\nУже в онтологии — типы:\n" (profile/node-type-lines v)
+                              ;; i18n-ignore
+                              "\nсвязи:\n" (profile/relation-lines v))))]
+      (reset! busy true) (reset! stop? false)
+      (-> (reduce (fn [acc {part :text n :n}]
+                    (p/let [{:keys [types relations notes]} acc]
+                      (if @stop?
+                        acc
+                        (p/let [raw (llm/chat! (str vocab-instruction (answer-language) (known)
+                                                    (when (seq types)
+                                                      ;; i18n-ignore
+                                                      (str "\nУже предложено из этого материала: " (str/join ", " (map :id types)))))
+                                               (cond-> text
+                                                 ;; i18n-ignore
+                                                 d (str "\n\nМатериал из файла «" (:name d) "»" (when (> n 1) (str ", часть из " n)) ":\n" part))
+                                               {:max-tokens (llm/long-reply-cap)})
+                                ops (parse-reply raw)]
+                          {:types (into types (remove (fn [x] (some #(= (:id %) (:id x)) types)) (:types ops)))
+                           :relations (into relations (:relations ops))
+                           :notes (conj notes (:note ops))}))))
+                  (p/resolved {:types [] :relations [] :notes []})
+                  parts)
+          (p/then (fn [{:keys [types relations notes]}]
+                    (when (store/append-to? home)
+                      (let [cs (vocab-cards types relations (store/kg))]
+                        (swap! cards into cs)
+                        (swap! msgs conj {:who :llm :text (str (some not-empty notes) (when (some not-empty notes) "\n\n")
+                                                               (t :chat/vocab-proposed {"{t}" (count (filter #(= :type (:card %)) cs))
+                                                                                       "{r}" (count (filter #(= :relation (:card %)) cs))}))})))))
+          (p/catch (fn [e] (swap! msgs conj {:who :sys :text (str (t :chat/error-prefix) (ex-message e))})))
+          (p/finally #(reset! busy false))))))
+
+;; --- the one door: nothing open → ask first (wiki/Ontology-Graph.md) --------
+
+(defn nothing-open?
+  "«Nothing open» (Denis 2026-11-19, «context matters»): the open graph is
+   empty, bound to no ontology and describes no types — a fresh «Мой граф»
+   or a just-made graph (not a learner's personal one). Anything else takes
+   a document as its extension."
+  []
+  (let [kg (store/kg)]
+    (and (empty? (:concepts kg)) (empty? (:proposals kg))
+         (not (:ontology-graph? kg)) (nil? (:ontology kg))
+         (profile/learning? (fold/profile kg))
+         ;; a learner's own graph is built FROM their material: content, by
+         ;; the choice that made it (build-from-material) — never asked again
+         (not (store/personal?)))))
+
+(defn- triage!
+  "The document waits in a card that asks what it is — its guess first."
+  [home d]
+  (reset! graph home) (reset! doc nil)
+  (when (empty? @cards) (reset! decided 0))
+  (swap! msgs conj {:who :user :text (str (t :chat/file-tag) (:name d))})
+  (swap! cards (fn [cs] (vec (cons {:card :triage
+                                    :data {:id (str "triage-" (random-uuid)) :doc d
+                                           :what (if (ontology-file? d) :ontology :content)
+                                           :ontology "learning"}}
+                                   cs)))))
+
+(declare content-intake! resolve-card!)
+
+(defn triage-go!
+  "The author's answer: the open (empty) graph becomes an ontology and the
+   document is read for types and relations — or the graph takes the chosen
+   ontology (built-in learning, or a graph of the set) and the document is
+   read as its content."
+  [{:keys [data] :as c}]
+  (let [{:keys [doc what ontology]} data
+        home @store/current]
+    (resolve-card! c)
+    (cond
+      (= :ontology what)
+      (when (nil? (store/make-types-graph!)) (ontology-intake! home doc nil))
+      (= "learning" ontology) (content-intake! home doc nil)
+      :else (if-let [err (store/bind! home ontology)]
+              (reset! store/last-error err)
+              (content-intake! home doc nil)))))
+
+(defn- content-intake!
+  "A document (or typed text) read into the open data graph as topic and
+   link cards — the two-step intake."
+  [home d text]
+  (let [parts (if d
+              (fold/text-chunks (:text d) chunk-chars)
+              [{:text text}])
+      material (fn [{part :text n :n}]
+                 (cond-> text
+                   ;; i18n-ignore — the material's framing for the model, not shown
+                   d (str "\n\nМатериал из файла «" (:name d) "»"
+                          ;; i18n-ignore
+                          (when (:pages d) " (постранично)")
+                          ;; i18n-ignore
+                          (when (> n 1) (str ", часть из " n))
+                          ":\n" part)))]
+  ;; nil text = the triage card already showed this drop
+  (when (some? text)
+    (swap! msgs conj {:who :user :text (cond-> text
+                                         d (str (when (seq text) "\n") (t :chat/file-tag) (:name d)))}))
+  (when (empty? @cards) (reset! decided 0))
+  (reset! graph home)
+  (reset! doc nil)
+  (reset! stop? false)
+  (reset! busy true)
+  ;; a QUEUE of parts: a part whose reply arrives cut at the provider's
+  ;; output cap (no valid JSON) is read again in halves — a dense
+  ;; process document answered 7.5–9.3k tokens per 20k-char part
+  ;; against a 4096 cap and lost every part (business dogfood 2026-10-15)
+  (letfn [(run [queue done prior dropped notes]
+            (if (or (empty? queue) @stop?)
+              (p/resolved {:i done :n (+ done (count queue)) :prior prior :dropped dropped :notes notes})
+              (let [n (+ done (count queue))
+                    part (assoc (first queue) :i done :n n)]
+                (reset! progress (assoc part :step :concepts))
+                (-> (intake-part! home d (material part) prior
+                                  #(swap! progress assoc :step %))
+                    (p/then (fn [r] (run (subvec queue 1) (inc done) (into prior (:concepts r))
+                                         (+ dropped (:dropped r)) (conj notes (:note r)))))
+                    (p/catch (fn [e]
+                               (cond
+                                 (:wrong-graph (ex-data e)) (p/rejected e)
+                                 (and (instance? js/SyntaxError e) (> (count (:text part)) min-split-chars))
+                                 ;; the rest of the queue is cut to the same size up front:
+                                 ;; a document that overflowed once overflows again, and every
+                                 ;; overflow costs a whole call
+                                 (let [cap (quot (inc (count (:text part))) 2)
+                                       halves (fold/text-chunks (:text part) cap)
+                                       rest (mapcat #(fold/text-chunks (:text %) cap) (subvec queue 1))]
+                                   (swap! msgs conj {:who :sys :text (t :chat/part-split {"{part}" (part-label part)})})
+                                   (run (into (vec halves) rest) done prior dropped notes))
+                                 ;; one unreadable reply costs one part, not the document
+                                 :else
+                                 (do (swap! msgs conj {:who :sys :text (str (when (> n 1) (str (part-label part) " — "))
+                                                                            (t :chat/error-prefix) (ex-message e))})
+                                     (run (subvec queue 1) (inc done) prior dropped notes)))))))))]
+    (-> (run (vec parts) 0 [] 0 [])
+        (p/then (fn [{:keys [i n prior dropped notes]}]
+                  (swap! msgs conj
+                         {:who :llm
+                          :text (cond
+                                  (< i n) (t :chat/parts-stopped {"{i}" i "{n}" n "{c}" (count prior)})
+                                  (> n 1) (t :chat/parts-done {"{n}" n "{c}" (count prior)})
+                                  :else (or (some not-empty notes) (t :chat/proposals-note)))})
+                  (when (pos? dropped)
+                    (swap! msgs conj {:who :sys :text (str (t :chat/dropped-prefix) dropped)}))
+                  (when (and d (= i n) (store/append-to? home)) (add-missing-steps! d prior))))
+        (p/catch (fn [e]
+                   (swap! msgs conj {:who :sys :text (if (:wrong-graph (ex-data e))
+                                                       (t :chat/wrong-graph)
+                                                       (str (t :chat/error-prefix) (ex-message e)))})))
+        (p/finally #(do (reset! busy false) (reset! progress nil)))))))
+
 (defn send! [text]
   (let [d @doc
         ;; the graph this conversation belongs to: an answer that arrives
@@ -963,79 +1216,28 @@
       (foreign?)
       (swap! msgs conj {:who :sys :text (t :chat/cards-other-graph {"{title}" (store/graph-title @graph)})})
 
+      ;; an ontology graph takes a document as types and relations (slice 3)
+      (:ontology-graph? (store/kg))
+      (ontology-intake! home d text)
+
+      ;; nothing open (before the file refusal: an ontology file into an
+      ;; empty graph is asked about, its guess «ontology»)
+      ;; — an empty graph bound to no ontology: a document is
+      ;; asked about first (ontology or content, and on which ontology)
+      (and d (nothing-open?))
+      (triage! home d)
+
+      ;; a vocabulary file belongs in an ontology graph, not among the data
+      (and d (ontology-file? d))
+      (do (reset! doc nil) (swap! msgs conj {:who :sys :text (t :chat/vocab-file-elsewhere)}))
+
       ;; the ontology interview: the answer is a turn of it, documents wait
       @onto
       (do (reset! doc nil)
           (when d (swap! msgs conj {:who :sys :text (t :chat/onto-doc-later)}))
           (when (seq text) (ontology-turn! home text)))
 
-      :else
-      (let [parts (if d
-                    (fold/text-chunks (:text d) chunk-chars)
-                    [{:text text}])
-            material (fn [{part :text n :n}]
-                       (cond-> text
-                         ;; i18n-ignore — the material's framing for the model, not shown
-                         d (str "\n\nМатериал из файла «" (:name d) "»"
-                                ;; i18n-ignore
-                                (when (:pages d) " (постранично)")
-                                ;; i18n-ignore
-                                (when (> n 1) (str ", часть из " n))
-                                ":\n" part)))]
-        (swap! msgs conj {:who :user :text (cond-> text
-                                             d (str (when (seq text) "\n") (t :chat/file-tag) (:name d)))})
-        (when (empty? @cards) (reset! decided 0))
-        (reset! graph home)
-        (reset! doc nil)
-        (reset! stop? false)
-        (reset! busy true)
-        ;; a QUEUE of parts: a part whose reply arrives cut at the provider's
-        ;; output cap (no valid JSON) is read again in halves — a dense
-        ;; process document answered 7.5–9.3k tokens per 20k-char part
-        ;; against a 4096 cap and lost every part (business dogfood 2026-10-15)
-        (letfn [(run [queue done prior dropped notes]
-                  (if (or (empty? queue) @stop?)
-                    (p/resolved {:i done :n (+ done (count queue)) :prior prior :dropped dropped :notes notes})
-                    (let [n (+ done (count queue))
-                          part (assoc (first queue) :i done :n n)]
-                      (reset! progress (assoc part :step :concepts))
-                      (-> (intake-part! home d (material part) prior
-                                        #(swap! progress assoc :step %))
-                          (p/then (fn [r] (run (subvec queue 1) (inc done) (into prior (:concepts r))
-                                               (+ dropped (:dropped r)) (conj notes (:note r)))))
-                          (p/catch (fn [e]
-                                     (cond
-                                       (:wrong-graph (ex-data e)) (p/rejected e)
-                                       (and (instance? js/SyntaxError e) (> (count (:text part)) min-split-chars))
-                                       ;; the rest of the queue is cut to the same size up front:
-                                       ;; a document that overflowed once overflows again, and every
-                                       ;; overflow costs a whole call
-                                       (let [cap (quot (inc (count (:text part))) 2)
-                                             halves (fold/text-chunks (:text part) cap)
-                                             rest (mapcat #(fold/text-chunks (:text %) cap) (subvec queue 1))]
-                                         (swap! msgs conj {:who :sys :text (t :chat/part-split {"{part}" (part-label part)})})
-                                         (run (into (vec halves) rest) done prior dropped notes))
-                                       ;; one unreadable reply costs one part, not the document
-                                       :else
-                                       (do (swap! msgs conj {:who :sys :text (str (when (> n 1) (str (part-label part) " — "))
-                                                                                  (t :chat/error-prefix) (ex-message e))})
-                                           (run (subvec queue 1) (inc done) prior dropped notes)))))))))]
-          (-> (run (vec parts) 0 [] 0 [])
-              (p/then (fn [{:keys [i n prior dropped notes]}]
-                        (swap! msgs conj
-                               {:who :llm
-                                :text (cond
-                                        (< i n) (t :chat/parts-stopped {"{i}" i "{n}" n "{c}" (count prior)})
-                                        (> n 1) (t :chat/parts-done {"{n}" n "{c}" (count prior)})
-                                        :else (or (some not-empty notes) (t :chat/proposals-note)))})
-                        (when (pos? dropped)
-                          (swap! msgs conj {:who :sys :text (str (t :chat/dropped-prefix) dropped)}))
-                        (when (and d (= i n) (store/append-to? home)) (add-missing-steps! d prior))))
-              (p/catch (fn [e]
-                         (swap! msgs conj {:who :sys :text (if (:wrong-graph (ex-data e))
-                                                             (t :chat/wrong-graph)
-                                                             (str (t :chat/error-prefix) (ex-message e)))})))
-              (p/finally #(do (reset! busy false) (reset! progress nil)))))))))
+      :else (content-intake! home d text))))
 
 ;; --- the drafting bench: the model drafts exercises, the runtime judges -------
 ;; wiki/Exercises.md «The bench». Every draft must pass the AUTHOR's gate
@@ -1404,6 +1606,7 @@
             :question (store/append! (or (:ev c) (question-event data)))
             :item (or (store/append! (:ev c)) (store/append! {:ev/type :item-accepted :id (:id data)}))
             :change (store/append! (:ev c))
+            (:type :relation) (store/append! (vocab-event c (store/kg)))
             ;; a drafted exercise: the runtime judged it, the author accepts it
             :exercise (let [id (str "i-" (random-uuid))]
                         (or (store/append! {:ev/type :item-added
@@ -1956,6 +2159,47 @@
        [:button.primary.compose-profile {:disabled (or @busy (foreign?)) :on-click compose-profile!} (t :chat/compose-profile)]
        [:p.muted (t :chat/onto-accept-first)])]))
 
+(defmethod card-view :triage [{:keys [data] :as c}]
+  (let [{:keys [doc what ontology]} data
+        choose! (fn [k v] (swap! cards (fn [cs] (mapv #(if (= % c) (assoc-in % [:data k] v) %) cs))))
+        choices (cons "learning" (map :id (filter #(store/whole-ontology? (:id %)) (store/ontology-graphs))))]
+    [:div.card.card-triage
+     [:span.card-tag (t :chat/triage-tag)]
+     [:b (t :chat/triage-q {"{name}" (:name doc)})]
+     [:label.triage-opt [:input.triage-ontology {:type "radio" :checked (= :ontology what) :on-change #(choose! :what :ontology)}]
+      " " (t :chat/triage-ontology)]
+     [:label.triage-opt [:input.triage-content {:type "radio" :checked (= :content what) :on-change #(choose! :what :content)}]
+      " " (t :chat/triage-content)]
+     (when (= :content what)
+       [:label.triage-onto (t :chat/triage-which)
+        [:select.triage-which {:value ontology :on-change #(choose! :ontology (.. % -target -value))}
+         (for [o choices]
+           ^{:key o} [:option {:value o} (if (= "learning" o) (t :chat/triage-learning) (store/graph-title o))])]])
+     [:div.row
+      [:button.primary.triage-go {:disabled (or @busy (foreign?)) :on-click #(triage-go! c)} (t :chat/triage-go)]
+      [:button {:disabled (foreign?) :on-click #(resolve-card! c)} (t :chat/discard)]]]))
+
+(defmethod card-view :type [{:keys [data] :as c}]
+  [:div.card.card-type
+   [:span.card-tag (t :chat/type-tag)]
+   [:b (:title data)] [:p (:definition data)]
+   (when (seq (:evidence data)) [:p.muted "«" (:evidence data) "»"])
+   (when (get-in (store/kg) [:concepts (:id data)]) [:p.card-dup (t :chat/vocab-exists)])
+   [:div.row
+    [:button.primary.type-accept {:disabled (or (foreign?) (:refused c)) :on-click #(accept! c)} (t :chat/accept)]
+    [:button {:disabled (foreign?) :on-click #(resolve-card! c)} (t :chat/discard)]]])
+
+(defmethod card-view :relation [{:keys [data] :as c}]
+  [:div.card.card-relation
+   [:span.card-tag (t :chat/relation-tag)]
+   [:b (str (:from-title data) " —" (:label data) "→ " (:to-title data))]
+   (when (seq (:inverse data)) [:p.muted (str (:to-title data) " —" (:inverse data) "→ " (:from-title data))])
+   (when (seq (:description data)) [:p (:description data)])
+   (when (seq (:evidence data)) [:p.muted "«" (:evidence data) "»"])
+   [:div.row
+    [:button.primary.relation-accept {:disabled (or (foreign?) (:refused c)) :on-click #(accept! c)} (t :chat/accept)]
+    [:button {:disabled (foreign?) :on-click #(resolve-card! c)} (t :chat/discard)]]])
+
 (defmethod card-view :concept [{:keys [data] :as c}]
   [:div.card
    [:span.card-tag (let [p (store/profile)]
@@ -2249,7 +2493,7 @@
         ;; the buttons refuse anyway
         ;; the guided «Your course» step is pinned above the pile, never
         ;; buried five-at-a-time behind the drafts it waits for
-        build? #(#{:build-next :profile-next :missing-steps} (:card %))
+        build? #(#{:build-next :profile-next :missing-steps :triage} (:card %))
         pinned (filter build? @cards)
         pile (remove build? @cards)
         ready (if (foreign?) pile (filter #(reviewable? kg %) pile))
@@ -2273,15 +2517,17 @@
        (let [flagged? #(or (false? (get-in % [:data :stated]))
                            (and (= :concept (:card %)) (fold/near-duplicate kg (:data %))))
              kind (fn [k] (filter #(and (= k (:card %)) (not (:refused %))) ready))
-             topics (remove flagged? (kind :concept))
-             links (remove flagged? (kind :edge))
+             topics (remove flagged? (concat (kind :concept) (kind :type)))
+             links (remove flagged? (concat (kind :edge) (kind :relation)))
              held (count (filter flagged? (concat (kind :concept) (kind :edge))))]
          (when (or (> (count topics) 1) (> (count links) 1) (pos? held))
            [:div.accept-all
             (when (> (count topics) 1)
-              [:button.accept-all-topics {:on-click #(accept-all! topics)} (t :chat/accept-all-topics {"{n}" (count topics)})])
+              [:button.accept-all-topics {:on-click #(accept-all! topics)}
+               (t (if (:ontology-graph? kg) :chat/accept-all-types :chat/accept-all-topics) {"{n}" (count topics)})])
             (when (> (count links) 1)
-              [:button.accept-all-links {:on-click #(accept-all! links)} (t :chat/accept-all-links {"{n}" (count links)})])
+              [:button.accept-all-links {:on-click #(accept-all! links)}
+               (t (if (:ontology-graph? kg) :chat/accept-all-relations :chat/accept-all-links) {"{n}" (count links)})])
             (when (pos? held) [:span.muted.accept-all-held (t :chat/accept-all-held {"{n}" held})])])))
      (for [c pinned] ^{:key (get-in c [:data :id])} [card-view c])
      (for [[i c] (map-indexed vector (take batch ready))]

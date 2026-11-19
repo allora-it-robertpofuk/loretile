@@ -807,8 +807,9 @@
            [:button.primary {:on-click #(reset! show-new-concept true)}
             [icons/icon :plus] (t (:button (node-words kg)))]
            [:a.btn {:href "#/chat"} [icons/icon :chat] (t :ui/assistant)]]
-          ;; kintale's «load demo» — three subjects, one per pitch
-          (when demos-on?
+          ;; kintale's «load demo» — three subjects, one per pitch (not on an
+          ;; ontology's map: a demo is content, never a vocabulary)
+          (when (and demos-on? (not (:ontology-graph? kg)))
             [:<>
              [:p.muted.empty-or (t :ui/empty-or)]
              [:div.demo-pick

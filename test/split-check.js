@@ -9,6 +9,7 @@
 // clickable for ever at the top of the pile.
 // Usage: serve public/ first, then: node test/split-check.js [baseUrl]
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const fs = require('fs');
 const path = require('path');
 const BASE = process.argv[2] || 'http://localhost:8291';
@@ -75,6 +76,7 @@ fs.writeFileSync(FIXTURE, Array.from({ length: 12 }, (_, i) =>
   for (let i = 0; i < 40 && !chip; i++) { await sleep(250); chip = await page.$('.doc-chip'); }
   check(chip !== null, 'long document attached');
   await page.click('.composer button.primary');
+  await G.passTriage(page);   // nothing open yet: the one door asks first
   await sleep(500);
   for (let i = 0; i < 80 && await page.$('.intake-progress'); i++) await sleep(250);
 

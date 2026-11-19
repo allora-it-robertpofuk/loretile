@@ -79,6 +79,7 @@ fs.writeFileSync(FIXTURE, Array.from({ length: 12 }, (_, i) =>
   for (let i = 0; i < 40 && !chip; i++) { await sleep(250); chip = await page.$('.doc-chip'); }
   check(chip !== null, 'long document attached');
   await page.click('.composer button.primary');
+  await G.passTriage(page);   // nothing open yet: the one door asks first
   await sleep(300);
 
   const prog = await page.$eval('.intake-progress', (e) => e.textContent).catch(() => '');

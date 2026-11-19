@@ -756,3 +756,9 @@ select.node-type { margin-bottom: 8px; }
 .edge-props .kv-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 30px; gap: 6px; align-items: center; }
 .edge-props .kv-row { display: contents; }
 .edge-props .kv-row input { margin: 0; min-width: 0; padding: 6px 8px; font-size: 14px; }
+
+/* the one door's triage card (2026-11-19) */
+.card-triage .triage-opt { display: flex; align-items: center; gap: 8px; margin: 4px 0; cursor: pointer; }
+.card-triage .triage-opt input { width: auto; margin: 0; flex: none; }
+.card-triage .triage-onto { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 4px 26px; font-size: 13px; color: var(--muted); }
+.card-triage .triage-onto select { margin: 0; }

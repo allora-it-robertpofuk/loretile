@@ -38,6 +38,20 @@ async function newGraph(page, base, title, ontology = 'learning') {
   await sleep(700);
 }
 
+// THE ONE DOOR (2026-11-19): a document dropped while nothing is open (an
+// empty graph on no ontology) waits in a triage card. Answer it — graph
+// content on the built-in learning ontology unless told otherwise — so a
+// check about the intake itself goes on as before. No card: nothing to do.
+async function passTriage(page, what = 'content', ontology = 'learning') {
+  for (let i = 0; i < 10 && !(await page.$('.card-triage')); i++) await sleep(100);
+  if (!(await page.$('.card-triage'))) return false;
+  await page.click(what === 'ontology' ? '.card-triage .triage-ontology' : '.card-triage .triage-content');
+  if (what !== 'ontology') await page.select('.card-triage .triage-which', ontology).catch(() => {});
+  await page.click('.card-triage .triage-go');
+  await sleep(300);
+  return true;
+}
+
 // THE DROPPED DOOR, kept for checks until slice 3 of wiki/Ontology-Graph.md
 // replaces it with the assistant's cards: an ontology file (edn or Turtle)
 // → a graph carrying that ontology in its own log (moved over to an
@@ -57,4 +71,4 @@ async function graphFromOntologyFile(page, file, title) {
   }, text, path.basename(file), title);
 }
 
-module.exports = { openGraph, listRows, newGraph, graphFromOntologyFile, sleep };
+module.exports = { openGraph, listRows, newGraph, graphFromOntologyFile, passTriage, sleep };

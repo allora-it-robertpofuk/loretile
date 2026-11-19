@@ -353,6 +353,17 @@
   [oid]
   (some? (copy-event oid)))
 
+(defn make-types-graph!
+  "The open graph becomes one that describes types (its ontology property
+   set to the built-in types one) — the one door's «this is an ontology» for
+   an empty graph. nil on success, else the guard error."
+  []
+  (let [err (append! {:ev/type :change :ops [[:graph-set {:ontology fold/types-ontology}]]})]
+    (when (nil? err)
+      (reset! graphs (mapv #(cond-> % (= @current (:id %)) (assoc :ontology fold/types-ontology)) @graphs))
+      (persist-registry!))
+    err))
+
 (defn bind!
   "Give graph `gid` the ontology graph `oid`: its copy goes into gid's log
    and the registry remembers the binding, so changes flow. nil on success,
