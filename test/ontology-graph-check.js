@@ -170,12 +170,25 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check(/:edge-remove "[^"]+" :временная/.test(await log()) && !(await page.$$eval('.relation-row', (rs) => rs.some((r) => /временная/.test(r.textContent)))),
     'a whole relation is deleted from the type\'s popup');
 
+  // a competency question is raised in the ontology graph and checked in the graphs using it
+  await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.type('.cq-form input', 'Кто выполняет процесс?');
+  await page.select('.cq-form select.cq-rel', 'performs'); await sleep(100);
+  await page.select('.cq-form select.cq-dir', 'in');
+  await page.select('.cq-form select.cq-from', 'process');
+  await page.click('.cq-form .cq-add'); await sleep(400);
+  check(/проверяется в графах/.test(await page.$eval('.cq-row', (e) => e.textContent).catch(() => '')),
+    'the ontology graph raises a question, to be checked in the graphs using it');
+
   // the bound graph took the new copy
   await G.openGraph(page, BASE, /^Магазин$/);
   await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' });
   await sleep(300);
   const tables = await page.$eval('.ontology-page', (e) => e.textContent);
   check(/Поставщик/.test(tables) && /снабжает/.test(tables), 'the bound graph took the new copy: the type and the renamed relation');
+  const cqRow = await page.$eval('.cq-row', (e) => e.textContent).catch(() => '');
+  check(/Кто выполняет процесс/.test(cqRow) && /из онтологии/.test(cqRow) && /отвечено/.test(cqRow),
+    `the graph using it inherits the question and checks it over its data (${cqRow.slice(0, 80)})`);
   check(/:ontology-copy \{[^}]*:icon "person"/.test(await log()) || /:icon "person"/.test((await log()).split(':ontology-copy').pop()),
     'the type\'s icon travels in the copy to the graph using it');
   check(await page.$('.type-styles .type-style-row') !== null, 'the graph\'s own page restyles its types (graph meta)');

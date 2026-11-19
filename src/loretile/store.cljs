@@ -338,10 +338,14 @@
    a graph property holding the vocabulary read out of it (wiki/Property-Graph.md)."
   [oid]
   (let [evs (graph-events oid)
-        p (assoc (fold/vocabulary (fold/kg evs)) :id oid)]
+        okg (fold/kg evs)
+        p (assoc (fold/vocabulary okg) :id oid)
+        ;; its competency questions travel too, to be checked over each graph's data
+        cqs (vec (for [[id q] (sort-by key (:cqs okg))] (assoc (dissoc q :inherited?) :id id)))]
     (when (and (seq (:node-types p)) (not (profile/problems p)))
       (stamp nil {:ev/type :change
-                  :ops [[:graph-set {:ontology oid :ontology-version (:ev/id (peek evs)) :ontology-copy p}]]}))))
+                  :ops [[:graph-set {:ontology oid :ontology-version (:ev/id (peek evs)) :ontology-copy p
+                                     :ontology-cqs cqs}]]}))))
 
 (defn whole-ontology?
   "Can a data graph take the ontology graph `oid` as it stands (a type, the

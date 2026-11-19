@@ -2447,7 +2447,7 @@
   [_]
   (let [q (r/atom "") rel (r/atom "") from (r/atom "") dir (r/atom "out")]
     (fn [kg]
-      (let [p (fold/profile kg)]
+      (let [p (fold/defined kg)]
       [:div.onto-form.cq-form
        [:input {:placeholder (t :ui/cq-question-placeholder) :default-value @q
                 :on-change #(reset! q (.. % -target -value))}]
@@ -2552,9 +2552,11 @@
     [:section.cqs
      [:h3 (t :ui/cqs) (when (pos? asked) [:span.muted.cq-tracker " · " (t :ui/cq-tracker {"{a}" answered "{n}" asked})])]
      [:p.muted (t :ui/cqs-hint)]
-     (for [{:keys [id question pattern check]} report]
+     (for [{:keys [id question pattern check]} report
+           :let [inherited? (get-in kg [:cqs id :inherited?])
+                 check (when-not (:ontology-graph? kg) check)]]
        ^{:key id}
-       [:div.cq-row
+       [:div.cq-row {:class (when inherited? "inherited")}
         [:span.q question
          (when pattern [:span.muted (str " [" (name (:relation pattern))
                                         (when (:from-type pattern) (str " · " (profile/kind-label (fold/profile kg) (:from-type pattern))))
@@ -2566,8 +2568,11 @@
              [:span.muted " · " (t :ui/cq-gaps)
               (for [g (:gaps check)]
                 ^{:key g} [:a {:href (str "#/c/" (js/encodeURIComponent g))} (get-in kg [:concepts g :title] g) " "])])]
-          [:span.muted (t :ui/cq-no-pattern)])
-        [rm-btn id {:ev/type :cq-retired :id id}]])
+          (cond (:ontology-graph? kg) [:span.muted (t :ui/cq-checked-in-graphs)]
+                :else [:span.muted (t :ui/cq-no-pattern)]))
+        (if inherited?
+          [:span.muted.cq-inherited (t :ui/cq-inherited)]
+          [rm-btn id {:ev/type :cq-retired :id id}])])
      ^{:key (str "cq-form-" (count report))} [cq-form kg]]))
 
 (defn- pitfalls-section
@@ -2783,7 +2788,7 @@
             [:tr.desc-row [:td.desc-cell {:col-span 6} [describe-cell :relation r]]])])]]
       (when-not fixed? ^{:key (str "rel-" (count (profile/relations p)))} [relation-form kg])]
      ;; questions and pitfalls are checked over DATA — in the graphs that use it
-     (when-not (or learning? onto?) [cq-section kg])
+     (when-not learning? [cq-section kg])
      (when-not (or learning? onto?) [pitfalls-section kg])]))
 
 ;; --- graphs and ontologies, managed (Denis 2026-11-19) -------------------------

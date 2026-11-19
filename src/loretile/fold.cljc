@@ -152,9 +152,17 @@
             kg (assoc kg :graph g :ontology-graph? (= types-ontology (:ontology g)))]
         (cond
           (not (or (contains? a :ontology) (contains? a :ontology-copy))) kg
-          (:ontology-copy g) (assoc kg :profile (profile/normalize (:ontology-copy g))
-                                    :ontology {:graph (:ontology g) :version (:ontology-version g)})
-          :else (dissoc kg :profile :ontology)))
+          (:ontology-copy g)
+          (-> kg
+              (assoc :profile (profile/normalize (:ontology-copy g))
+                     :ontology {:graph (:ontology g) :version (:ontology-version g)})
+              ;; the ontology's competency questions travel in the copy and are
+              ;; checked HERE, over this graph's data; the graph's own stay
+              (update :cqs (fn [cs] (merge (into {} (remove (comp :inherited? val)) cs)
+                                           (into {} (for [{:keys [id] :as q} (:ontology-cqs g)]
+                                                      [id (assoc (dissoc q :id) :inherited? true)]))))))
+          :else (-> kg (dissoc :profile :ontology)
+                    (update :cqs (fn [cs] (into {} (remove (comp :inherited? val)) cs))))))
       :node-set
       (update-in kg [:concepts a]
                  (fn [n] (stamp (merge-props (or n {:id a :title a :definition "" :status :accepted :version 1
@@ -267,11 +275,15 @@
     {:error :invalid-schema :detail {:owner {:team ["a team is named"]}}}
     ;; a competency question's pattern names a relation (and a type) of the profile
     (and (= :cq-raised (:ev/type e))
-         (let [{:keys [relation from-type]} (get-in e [:cq :pattern])]
+         (let [{:keys [relation from-type]} (get-in e [:cq :pattern])
+               ;; an ontology graph asks its questions of its OWN vocabulary
+               p (if (:ontology-graph? kg) (vocabulary kg) (:profile kg))]
            (and relation
-                (or (nil? (profile/relation (:profile kg) relation))
-                    (and from-type (nil? (profile/node-type-of (:profile kg) from-type)))))))
+                (or (nil? (profile/relation p relation))
+                    (and from-type (nil? (profile/node-type-of p from-type)))))))
     {:error :unknown-relation :detail (get-in e [:cq :pattern])}
+    (and (= :cq-retired (:ev/type e)) (get-in kg [:cqs (:id e) :inherited?]))
+    {:error :ontology-elsewhere :detail (get-in kg [:ontology :graph])}
     ;; the same question twice is one question (business dogfood 2026-10-15:
     ;; a restored pile re-accepted every card and the graph asked each twice)
     (and (= :cq-raised (:ev/type e))

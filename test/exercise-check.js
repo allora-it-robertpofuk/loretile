@@ -308,7 +308,11 @@ for (const line of logs.split('\n')) {
   await runCode('while True:\n    pass');
   check(/дольше 10 секунд/.test(await text(LIVE + ' .ex-out')) && Date.now() - t0 < 30000,
     'an endless loop is stopped, and the tab stays alive');
+  // this run pays a FRESH Python boot (the loop killed the shared worker): the
+  // yardstick the spare is measured against below, on this machine, under its load
+  const tFresh = Date.now();
   await runCode('print("alive")');
+  const freshMs = Date.now() - tFresh;
   check(/alive/.test(await text(LIVE + ' .ex-out')), 'the next run works on a fresh worker');
   // ATTACK (review 2026-10-02 #1): a Run silences print in the shared worker.
   // The verdict runs in a clean worker, so the reference still prints 13.0
@@ -321,7 +325,9 @@ for (const line of logs.split('\n')) {
   const tAns = Date.now();
   await submitCode('round(22 * 0.59, 1)');
   const ansMs = Date.now() - tAns;
-  check(ansMs < 1000, 'a Python answer is judged without a fresh boot — the spare was ready (' + ansMs + ' ms)');
+  // relative, not absolute: a fixed 1000 ms failed at ~1080 ms whenever the
+  // machine was busy (2026-11-19); a judged answer must clearly beat a boot
+  check(ansMs < freshMs * 0.8, 'a Python answer is judged without a fresh boot — the spare was ready (' + ansMs + ' ms vs a fresh boot ' + freshMs + ' ms)');
   check(/закрыта/.test(await feedText()), 'a right answer of another shape passes and closes the topic');
   check(await page.evaluate(() => (localStorage.getItem('loretile-attempts') || '').split('{').some((m) => m.includes(':item "i-vin-ripeness-4"') && m.includes(':correct? true'))),
     'logged correct against the Python exercise');

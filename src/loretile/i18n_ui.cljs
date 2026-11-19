@@ -68,6 +68,8 @@
    :ui/properties {:ru "Свойства" :de "Eigenschaften" :en "Properties"}
    :ui/prop-key {:ru "свойство" :de "Eigenschaft" :en "property"}
    :ui/prop-value {:ru "значение" :de "Wert" :en "value"}
+   :ui/cq-checked-in-graphs {:ru "проверяется в графах с этой онтологией" :de "wird in den Graphen mit dieser Ontologie geprüft" :en "checked in the graphs using this ontology"}
+   :ui/cq-inherited {:ru "из онтологии" :de "aus der Ontologie" :en "from the ontology"}
    :ui/prop-icon {:ru "значок" :de "Symbol" :en "icon"}
    :ui/icon-none {:ru "без значка" :de "ohne Symbol" :en "no icon"}
    :ui/style-reset {:ru "вернуть унаследованный" :de "auf geerbt zurücksetzen" :en "back to inherited"}

@@ -915,6 +915,18 @@
                 err (f/guard bound (ch [:graph-set {:ontology-version "v2" :ontology-copy no-rule}]))]
             (is (= :ontology-breaks-data (:error err)))
             (is (= {:node-types [:rule] :relations [:governed-by]} (:detail err)))))
+        (testing "competency questions are raised in the ontology, travel in the copy and are checked over the data"
+          (let [q {:id "cq-who" :question "Кто выполняет процесс?" :pattern {:relation :performs :from-type :process :inverse? true}}]
+            (is (nil? (f/guard onto (e :cq-raised :cq q))) "an ontology graph asks of its own vocabulary")
+            (let [with-q (f/kg (into [(ch [:graph-set {:ontology "o-shop" :ontology-version "v2"
+                                                       :ontology-copy (assoc v :id "o-shop") :ontology-cqs [q]}])]
+                                     (rest shop-events)))
+                  check (:check (first (filter #(= "cq-who" (:id %)) (f/cq-report with-q))))]
+              (is (:inherited? (get-in with-q [:cqs "cq-who"])))
+              (is (= 2 (:asked check)) "asked of every process in THIS graph")
+              (is (= #{"checkout"} (set (:gaps check))) "and the one nobody performs is the gap")
+              (is (= :ontology-elsewhere (:error (f/guard with-q (e :cq-retired :id "cq-who"))))
+                  "an inherited question is retired in its ontology graph"))))
         (testing "a copy that only adds passes"
           (is (nil? (f/guard bound (ch [:graph-set {:ontology-version "v2"
                                                     :ontology-copy (update (assoc v :id "o-shop") :node-types conj {:id :metric :label "метрика"})}])))))))))
