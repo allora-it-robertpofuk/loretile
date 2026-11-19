@@ -44,6 +44,13 @@
   (let [n (name id)]
     (if (re-matches #"[A-Za-z][A-Za-z0-9_-]*" n) (str "v:" n) (iri (str base "vocab#" (enc n))))))
 
+(defn- prop-term
+  "A free property's key as `vp:key` when it is a plain name, else a full IRI
+   (its own namespace: a property never collides with a type or relation)."
+  [base k]
+  (let [n (name k)]
+    (if (re-matches #"[A-Za-z][A-Za-z0-9_-]*" n) (str "vp:" n) (iri (str base "vocab/prop#" (enc n))))))
+
 (defn- block
   "«subject p1 o1 ;\\n    p2 o2 .» from [p o] pairs (nil pairs dropped)."
   [subject pairs]
@@ -77,7 +84,8 @@
      "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n"
      "@prefix prov: <http://www.w3.org/ns/prov#> .\n"
      "@prefix lt: <" lt "> .\n"
-     "@prefix v: <" base "vocab#> .\n\n"
+     "@prefix v: <" base "vocab#> .\n"
+     "@prefix vp: <" base "vocab/prop#> .\n\n"
      ;; the graph and who answers for it
      (block (iri base)
             [["a" "lt:Graph"]
@@ -145,6 +153,8 @@
                  (when-let [b (:changed-by c)] ["lt:lastChangedBy" (lit (fold/author-name kg b))])
                  (when-let [d (gt/day (:changed-at c))] ["dcterms:modified" (str (lit d) "^^xsd:date")])
                  (when (= :deprecated (:status c)) ["owl:deprecated" "true"])]
+                ;; what a person set on the node, under its own key
+                (for [[k v] (fold/node-props c)] [(prop-term base k) (lit (str v) lang)])
                 (for [o (fold/concept-objects kg id) :when (seq (:text o))]
                   ["lt:material" (lit (fold/plain-text (:text o)) (:locale o))])
                 (for [s srcs] ["prov:wasDerivedFrom" (source s)])))))
@@ -153,13 +163,18 @@
       (for [{:keys [from to type]} (sort-by (juxt (comp name :type) :from :to) es)
             :when (and (not= :grounded-in type) (get-in kg [:concepts from]) (get-in kg [:concepts to]))]
         (str (node from) " " (term base type) " " (node to) " .\n")))
-     ;; a link the source does not state: the triple above, and a statement
-     ;; about it — RDF 1.1 reification, so every Turtle reader takes it
+     ;; what is said ABOUT an edge — a link the source does not state, or the
+     ;; properties a person set on it: the triple above, and a statement about
+     ;; it — RDF 1.1 reification, so every Turtle reader takes it
      (str/join
       (for [{:keys [from to type justification] :as e} (sort-by (juxt (comp name :type) :from :to) es)
-            :when (:inferred? e)]
+            :let [ps (fold/edge-props e)]
+            :when (and (not= :grounded-in type) (or (:inferred? e) (seq ps))
+                       (get-in kg [:concepts from]) (get-in kg [:concepts to]))]
         (block "[]"
-               [["a" "rdf:Statement"]
-                ["rdf:subject" (node from)] ["rdf:predicate" (term base type)] ["rdf:object" (node to)]
-                ["lt:inferred" "true"]
-                (when (seq justification) ["lt:justification" (lit justification lang)])]))))))
+               (concat
+                [["a" "rdf:Statement"]
+                 ["rdf:subject" (node from)] ["rdf:predicate" (term base type)] ["rdf:object" (node to)]
+                 (when (:inferred? e) ["lt:inferred" "true"])
+                 (when (and (:inferred? e) (seq justification)) ["lt:justification" (lit justification lang)])]
+                (for [[k v] ps] [(prop-term base k) (lit (str v) lang)]))))))))

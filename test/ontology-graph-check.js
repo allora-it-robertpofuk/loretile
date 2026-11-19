@@ -142,6 +142,23 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check(/порядк|ordering|bad-profile|Онтология/i.test(await page.$eval('.error', (e) => e.textContent).catch(() => '')),
     'a second ordering relation is refused, in words');
   await page.evaluate(() => { const b = document.querySelector('div.error button'); if (b) b.click(); });
+  // an edge's own properties: from its chip in the popup, or by tapping the relation's name on the map
+  await page.goto(BASE + '#/c/' + encodeURIComponent(sup), { waitUntil: 'networkidle0' }); await sleep(500);
+  await page.evaluate(() => [...document.querySelectorAll('.links .chip')].find((c) => /снабжает/.test(c.textContent)).querySelector('.chip-props').click());
+  await sleep(300);
+  check(await page.$('.edge-props .prop-new-key') !== null, 'a link chip opens the edge\'s own properties');
+  await page.type('.edge-props .prop-new-key', 'срок');
+  await page.type('.edge-props .prop-new-value', '5 дней');
+  await page.keyboard.press('Enter'); await sleep(400);
+  check(/:edge-set "[^"]+" :поставляет-для "[^"]+" \{:срок "5 дней"\}/.test(await log()), 'an edge property is an edge-set op');
+  check(await page.$eval('.edge-props .prop-row .prop-value', (e) => e.value).catch(() => '') === '5 дней'
+        && /1/.test(await page.$eval('.links .chip.on .chip-n', (e) => e.textContent).catch(() => '')), 'the row shows, and the chip counts it');
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(900);
+  await page.evaluate(() => { const t = [...document.querySelectorAll('.edge-text')].find((x) => /снабжает/.test(x.textContent)); t.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+  await sleep(700);
+  check(decodeURIComponent(await page.evaluate(() => location.hash)) === '#/c/' + sup && await page.$('.edge-props .prop-row') !== null,
+    'tapping a relation\'s name on the map opens that edge in its source\'s popup');
+
   // a relation can go entirely (the dialog is accepted): every edge of it in one change
   await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(600);
   await page.evaluate(() => [...document.querySelectorAll('.rail .rbtn')].find((e) => /Связь/.test(e.title)).click());

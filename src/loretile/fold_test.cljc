@@ -919,6 +919,33 @@
           (is (nil? (f/guard bound (ch [:graph-set {:ontology-version "v2"
                                                     :ontology-copy (update (assoc v :id "o-shop") :node-types conj {:id :metric :label "метрика"})}])))))))))
 
+(deftest properties-reach-every-reader
+  ;; 2026-11-19: what a person sets on a node or an edge in the popup must
+  ;; reach the agent export, the RDF and the read tools — not only the app
+  (let [kg (f/kg (conj shop-events
+                       (ch [:node-set "invoice" {:sla "2 дня" :owner "финансы"}]
+                           [:edge-set "accountant" :performs "invoice" {:since "2024" :share "30 %"}])))
+        md (export/markdown kg "Магазин")
+        ttl (rdf/turtle kg {:title "Магазин" :base "urn:loretile:shop/" :lang "ru"})
+        node (gt/open-node {:kg kg} "invoice")
+        edges (gt/list-edges kg :performs nil)]
+    (testing "the fold keeps them, apart from its own keys"
+      (is (= [[:owner "финансы"] [:sla "2 дня"]] (vec (f/node-props (get-in kg [:concepts "invoice"])))))
+      (let [e (first (filter #(= :performs (:type %)) (:edges kg)))]
+        (is (= [[:share "30 %"] [:since "2024"]] (vec (f/edge-props e))))
+        (is (= "denis" (:changed-by e)) "an edge-set says who changed the edge")))
+    (testing "the agent markdown"
+      (is (str/includes? md "- owner: финансы"))
+      (is (str/includes? md "- sla: 2 дня"))
+      (is (str/includes? md "{share: 30 %; since: 2024}") "an edge's properties ride on its line"))
+    (testing "the RDF: node properties under their key, edge properties on a reified statement"
+      (is (str/includes? ttl "@prefix vp: <urn:loretile:shop/vocab/prop#>"))
+      (is (re-find #"vp:sla \"2 дня\"@ru" ttl))
+      (is (re-find #"(?s)rdf:Statement ;\s+rdf:subject <urn:loretile:shop/node/accountant> ;\s+rdf:predicate v:performs ;\s+rdf:object <urn:loretile:shop/node/invoice> ;\s+vp:share \"30 %\"@ru ;\s+vp:since \"2024\"@ru" ttl)))
+    (testing "the read tools"
+      (is (str/includes? node "properties: owner = финансы; sla = 2 дня"))
+      (is (str/includes? edges "{share = 30 %; since = 2024}")))))
+
 (deftest the-fold-sees-ontology-pitfalls
   (let [profile (update shop-profile :relations conj {:id :related :label "связан с" :from #{:process} :to #{:process}})
         events [(e :profile-set :profile profile)

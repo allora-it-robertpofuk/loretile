@@ -339,14 +339,20 @@
                 ;; role —performs→ process points at the process (the `to` end)
                 :marker-start (when reads? "url(#arrow)")}]))))
 
+(declare edge-open)   ; the edge whose properties are open (below, with the popup)
+
 (defn- edge-text
   "A relation's name at the middle of its edge (above the loop of a type →
    same type)."
-  [{:keys [from to]} label]
+  [{:keys [from to type]} label]
   (let [p (get @positions to) q (get @positions from)]
     (when (and p q (seq label))
       (let [[x y] (if (= from to) [(:x p) (- (:y p) R 34)] [(/ (+ (:x p) (:x q)) 2) (/ (+ (:y p) (:y q)) 2)])]
-        [:text.edge-text {:x x :y (- y 4) :text-anchor "middle"} label]))))
+        ;; tapping it opens the edge's properties in its source node's popup
+        [:text.edge-text {:x x :y (- y 4) :text-anchor "middle"
+                          :on-pointer-down #(.stopPropagation %)
+                          :on-click #(do (reset! edge-open [from type to]) (goto! (str "#/c/" (js/encodeURIComponent from))))}
+         label]))))
 
 ;; kintale tap semantics: a single tap SELECTS (halo) or feeds link mode;
 ;; a second tap on the selected node opens the concept as a popup window
@@ -755,7 +761,7 @@
        [:text.node-label {:y (+ R 16) :opacity 0.75} (:title prop)]
        [:text.node-sub {:y (+ R 30)} (t :ui/ghost-hint)]])))
 
-(declare rail fullscreen-btn legend-btn layout-btn demos demos-on? pick-demo! merge-badge asof-btn color-scheme node-words edge-label)
+(declare rail fullscreen-btn legend-btn layout-btn demos demos-on? pick-demo! merge-badge asof-btn color-scheme node-words edge-label edge-open)
 
 (defn- mount-map!
   "Size the sim to the svg, seed the viewport once, bind the wheel once.
@@ -1599,63 +1605,78 @@
 
 ;; --- node properties (wiki/Property-Graph.md) --------------------------------
 
-(def ^:private core-props
-  "Properties the panel already shows or the fold keeps — not in the free list."
-  #{:id :title :definition :kind :status :version :changed-by :changed-at :added-by
-    :stale? :tags :evidence :source-id :color :icon :learnable?})
+(def ^:private core-props fold/node-core)
+
+(defn- kv-editor
+  "Properties as an aligned grid (Cloudscape's attribute-editor shape): key
+   and value side by side, × at the row's end, the last row adds (+, or
+   Enter). `put!` takes a property map — an emptied value removes (nil), a
+   renamed key moves its value. Inputs are semi-controlled — the map redraws
+   every tick and a controlled input drops keys there."
+  [_ _ _ _]
+  (let [new-k (r/atom "") new-v (r/atom "") gen (r/atom 0)]
+    (fn [rkey props put! core]
+      (let [add! (fn []
+                   (let [k (keyword (slug @new-k)) v (str/trim @new-v)]
+                     (when (and (seq (name k)) (seq v) (not (core k)) (nil? (put! {k v})))
+                       (reset! new-k "") (reset! new-v "") (swap! gen inc))))
+            enter-blurs #(when (= "Enter" (.-key %)) (.blur (.-target %)))]
+        [:div.kv-grid
+         (for [[k v] props]
+           ^{:key (str rkey k v)}
+           [:div.kv-row.prop-row
+            [:input.prop-key {:default-value (name k) :aria-label (t :ui/prop-key)
+                              :on-key-down enter-blurs
+                              :on-blur #(let [nk (keyword (slug (.. % -target -value)))]
+                                          (when (and (seq (name nk)) (not= nk k) (not (core nk)))
+                                            (put! {k nil nk v})))}]
+            [:input.prop-value {:default-value (str v) :aria-label (t :ui/prop-value)
+                                :on-key-down enter-blurs
+                                :on-blur #(let [x (str/trim (.. % -target -value))]
+                                            (when (not= x (str v)) (put! {k (when (seq x) x)})))}]
+            [:button.icon-btn.prop-x {:title (t :ui/delete) :aria-label (t :ui/delete) :on-click #(put! {k nil})}
+             [icons/icon :close]]])
+         ^{:key (str "add-" rkey "-" @gen)}
+         [:div.kv-row.prop-add
+          [:input.prop-new-key {:placeholder (t :ui/prop-key) :default-value ""
+                                :on-change #(reset! new-k (.. % -target -value))}]
+          [:input.prop-new-value {:placeholder (t :ui/prop-value) :default-value ""
+                                  :on-change #(reset! new-v (.. % -target -value))
+                                  :on-key-down #(when (= "Enter" (.-key %)) (add!))}]
+          [:button.icon-btn.prop-add-btn {:title (t :ui/add) :aria-label (t :ui/add) :on-click #(add!)}
+           [icons/icon :plus]]]]))))
 
 (defn- node-props
-  "A node's properties in the popup (Cloudscape's attribute-editor shape):
-   style first — colour and icon, overriding its graph's and ontology's;
-   in an ontology graph they are the type's defaults, plus «learnable» —
-   then one aligned row per property, key and value side by side, × at the
-   end; the last row adds (+, or Enter). Every edit is one `node-set` op;
-   an emptied value removes the property, a renamed key moves it. Inputs
-   are semi-controlled — the map redraws every tick and a controlled input
-   drops keys there."
-  [_ _]
-  (let [new-k (r/atom "") new-v (r/atom "") gen (r/atom 0)]
-    (fn [kg c]
-      (let [id (:id c)
-            put! (fn [props] (store/append! {:ev/type :change :ops [[:node-set id props]]}))
-            add! (fn []
-                   (let [k (keyword (slug @new-k)) v (str/trim @new-v)]
-                     (when (and (seq (name k)) (seq v) (not (core-props k)) (nil? (put! {k v})))
-                       (reset! new-k "") (reset! new-v "") (swap! gen inc))))
-            user (sort-by (comp name key) (remove (comp core-props key) c))
-            enter-blurs #(when (= "Enter" (.-key %)) (.blur (.-target %)))]
-        [:section.node-props
-         [:h3 (t :ui/properties)]
-         [style-controls (node-style kg c) (select-keys c [:color :icon]) put!]
-         (when (:ontology-graph? kg)
-           [:label.check.learnable-flag
-            [:input.prop-learnable {:type "checkbox" :checked (true? (:learnable? c))
-                                    :on-change #(put! {:learnable? (when (.. % -target -checked) true)})}]
-            " " (t :ui/learnable)])
-         [:div.kv-grid
-          (for [[k v] user]
-            ^{:key (str id k v)}
-            [:div.kv-row.prop-row
-             [:input.prop-key {:default-value (name k) :aria-label (t :ui/prop-key)
-                               :on-key-down enter-blurs
-                               :on-blur #(let [nk (keyword (slug (.. % -target -value)))]
-                                           (when (and (seq (name nk)) (not= nk k) (not (core-props nk)))
-                                             (put! {k nil nk v})))}]
-             [:input.prop-value {:default-value (str v) :aria-label (t :ui/prop-value)
-                                 :on-key-down enter-blurs
-                                 :on-blur #(let [x (str/trim (.. % -target -value))]
-                                             (when (not= x (str v)) (put! {k (when (seq x) x)})))}]
-             [:button.icon-btn.prop-x {:title (t :ui/delete) :aria-label (t :ui/delete) :on-click #(put! {k nil})}
-              [icons/icon :close]]])
-          ^{:key (str "add-" id "-" @gen)}
-          [:div.kv-row.prop-add
-           [:input.prop-new-key {:placeholder (t :ui/prop-key) :default-value ""
-                                 :on-change #(reset! new-k (.. % -target -value))}]
-           [:input.prop-new-value {:placeholder (t :ui/prop-value) :default-value ""
-                                   :on-change #(reset! new-v (.. % -target -value))
-                                   :on-key-down #(when (= "Enter" (.-key %)) (add!))}]
-           [:button.icon-btn.prop-add-btn {:title (t :ui/add) :aria-label (t :ui/add) :on-click #(add!)}
-            [icons/icon :plus]]]]]))))
+  "A node's properties in the popup: style first — colour and icon,
+   overriding its graph's and ontology's (in an ontology graph they are the
+   type's defaults, plus «learnable») — then its own properties. Every edit
+   is one `node-set` op."
+  [kg c]
+  (let [id (:id c)
+        put! (fn [props] (store/append! {:ev/type :change :ops [[:node-set id props]]}))]
+    [:section.node-props
+     [:h3 (t :ui/properties)]
+     [style-controls (node-style kg c) (select-keys c [:color :icon]) put!]
+     (when (:ontology-graph? kg)
+       [:label.check.learnable-flag
+        [:input.prop-learnable {:type "checkbox" :checked (true? (:learnable? c))
+                                :on-change #(put! {:learnable? (when (.. % -target -checked) true)})}]
+        " " (t :ui/learnable)])
+     [kv-editor id (fold/node-props c) put! fold/node-core]]))
+
+;; the edge whose properties are open in its source node's popup: [from type to]
+(defonce edge-open (r/atom nil))
+
+(defn- edge-props-panel
+  "An edge's own properties (2026-11-19): the same grid as a node's, under
+   the link chip; every edit is one `edge-set` op."
+  [kg {:keys [from to type] :as e}]
+  [:div.edge-props
+   [:p.muted.edge-props-head (str (get-in kg [:concepts from :title] from) " — " (edge-label kg type) " → "
+                                  (get-in kg [:concepts to :title] to))]
+   [kv-editor (str from type to) (fold/edge-props e)
+    #(store/append! {:ev/type :change :ops [[:edge-set from type to %]]})
+    fold/edge-core]])
 
 (defn- relation-props
   "In an ontology graph, the relations touching this type, edited in place:
@@ -1736,8 +1757,13 @@
           (for [{:keys [to type] :as e} (filter #(and (= id (:from %)) (not= :grounded-in (:type %)))
                                                 (:edges kg))]
             ^{:key (str to type)}
-            [:span.chip {:on-click #(goto! (str "#/c/" to))}
+            [:span.chip {:class (when (= @edge-open [id type to]) "on") :on-click #(goto! (str "#/c/" to))}
              (str (edge-label kg type) " → " (get-in kg [:concepts to :title] to))
+             (when-let [n (not-empty (fold/edge-props e))] [:span.chip-n (count n)])
+             [:button.chip-props {:title (t :ui/properties) :aria-label (t :ui/properties)
+                                  :on-click #(do (.stopPropagation %)
+                                                 (swap! edge-open (fn [o] (when (not= o [id type to]) [id type to]))))}
+              [icons/icon :rows]]
              [edge-x e]])
           ;; incoming: learning shows what this topic unlocks; a custom
           ;; ontology reads every relation back with its inverse label — even
@@ -1747,11 +1773,20 @@
                                                         (if (profile/learning? p) (= :requires (:type %)) (not= :grounded-in (:type %))))
                                                   (:edges kg))]
             ^{:key (str "in" from type)}
-            [:span.chip.chip-in {:on-click #(goto! (str "#/c/" from))}
+            [:span.chip.chip-in {:class (when (= @edge-open [from type id]) "on") :on-click #(goto! (str "#/c/" from))}
              (if (profile/learning? p)
                (t :ui/opens-arrow {"{title}" (get-in kg [:concepts from :title] from)})
                (str (edge-label kg type true) " ← " (get-in kg [:concepts from :title] from)))
+             (when-let [n (not-empty (fold/edge-props e))] [:span.chip-n (count n)])
+             [:button.chip-props {:title (t :ui/properties) :aria-label (t :ui/properties)
+                                  :on-click #(do (.stopPropagation %)
+                                                 (swap! edge-open (fn [o] (when (not= o [from type id]) [from type id]))))}
+              [icons/icon :rows]]
              [edge-x e]])]
+         ;; the open edge's own properties, under the chips
+         (when-let [[f ty to] @edge-open]
+           (when-let [e (first (filter #(= [f ty to] [(:from %) (:type %) (:to %)]) (:edges kg)))]
+             (when (#{f to} id) ^{:key (str "ep" f ty to)} [edge-props-panel kg e])))
          ;; a type in an ontology graph carries no learning material
          (when-not (:ontology-graph? kg)
           [:<>

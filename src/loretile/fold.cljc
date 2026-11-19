@@ -115,6 +115,27 @@
   "What the fold keeps itself and no op may set."
   #{:id :status :version :changed-by :changed-at :added-by :stale?})
 
+(def node-core
+  "A node's keys that are not free properties: the fold's own, the words the
+   panel shows, and the style (shown as controls)."
+  #{:id :title :definition :kind :status :version :changed-by :changed-at :added-by
+    :stale? :tags :evidence :source-id :color :icon :learnable?})
+
+(def edge-core
+  "An edge's keys that are not free properties: its identity, provenance and
+   the relation words an ontology edge carries (shown as their own fields)."
+  #{:from :to :type :provenance :justification :inferred? :min-level :status
+    :label :inverse :description :ordering? :acyclic? :symmetric? :changed-by :changed-at})
+
+(defn own-props
+  "What a person set on a node or an edge (wiki/Property-Graph.md): its keys
+   minus `core`, sorted by key — the popup's rows, the exports' properties."
+  [m core]
+  (sort-by (comp name key) (remove (comp core key) m)))
+
+(defn node-props [c] (own-props c node-core))
+(defn edge-props [e] (own-props e edge-core))
+
 (defn- merge-props [m props]
   (reduce-kv (fn [m k v] (if (nil? v) (dissoc m k) (assoc m k v))) (or m {}) props))
 
@@ -146,8 +167,8 @@
       (let [same? (same-edge? [a b c])
             old (first (filter same? (:edges kg)))]
         (update kg :edges (fn [es] (conj (set (remove same? es))
-                                          (merge-props (or old {:from a :type b :to c :provenance :authored})
-                                                       (dissoc d :from :to :type))))))
+                                          (stamp (merge-props (or old {:from a :type b :to c :provenance :authored})
+                                                              (dissoc d :from :to :type :changed-by :changed-at)))))))
       :edge-remove
       (update kg :edges (fn [es] (set (remove (same-edge? [a b c]) es)))))))
 

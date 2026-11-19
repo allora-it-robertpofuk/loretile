@@ -110,7 +110,8 @@ svg.graph { display: block; background: var(--map-bg, var(--bg)); touch-action: 
   linear-gradient(90deg, color-mix(in srgb, #2f6fbf 10%, transparent) 1px, transparent 1px); background-size: 28px 28px; }
 .scheme-warm { --map-bg: color-mix(in srgb, #d9822b 8%, var(--bg)); --muted: #c98a4b; }
 .node { cursor: pointer; }
-.edge-text { font-size: 11px; fill: var(--muted-fg, var(--muted)); paint-order: stroke; stroke: var(--map-bg, var(--bg)); stroke-width: 3px; pointer-events: none; }
+.edge-text { font-size: 11px; fill: var(--muted-fg, var(--muted)); paint-order: stroke; stroke: var(--map-bg, var(--bg)); stroke-width: 3px; cursor: pointer; }
+.edge-text:hover { fill: var(--accent); }
 .edge-loop { stroke-width: 1.5; }
 .node .node-body { fill: var(--muted); stroke: var(--card); stroke-width: 2;
   filter: drop-shadow(0 1px 3px rgba(0,0,0,.15)); }
@@ -743,3 +744,15 @@ select.node-type { margin-bottom: 8px; }
 .relation-props .relation-row input[type=text], .relation-props .relation-row input:not([type]) { margin: 0; min-width: 0; }
 .relation-props .relation-row label { font-size: 12px; display: flex; gap: 4px; align-items: center; }
 .edit-on-map { background: color-mix(in srgb, var(--accent) 10%, var(--card)); border-radius: 10px; padding: 8px 12px; font-size: 14px; }
+
+/* an edge's own properties, opened from its chip (2026-11-19) */
+.chip .chip-props { border: 0; background: none; padding: 0 2px; margin-left: 4px; display: inline-flex; align-items: center; cursor: pointer; opacity: .6; }
+.chip .chip-props:hover, .chip.on .chip-props { opacity: 1; }
+.chip .chip-props svg { width: 13px; height: 13px; }
+.chip .chip-n { font-size: 11px; margin-left: 4px; padding: 0 5px; border-radius: 8px; background: var(--accent-soft); }
+.chip.on { border-color: var(--accent); }
+.edge-props { margin: 8px 0; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+.edge-props .edge-props-head { margin: 0 0 6px; font-size: 13px; }
+.edge-props .kv-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 30px; gap: 6px; align-items: center; }
+.edge-props .kv-row { display: contents; }
+.edge-props .kv-row input { margin: 0; min-width: 0; padding: 6px 8px; font-size: 14px; }

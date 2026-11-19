@@ -98,6 +98,12 @@
                              ": " (clip (:definition c) 120)
                              (when only-mat? (when-let [s (snippet (mat id) q 140)] (str "\n    material: " s))))))))))
 
+(defn- edge-props-note
+  "An edge's own properties, inline after its endpoint: « {since = 2024}»."
+  [e]
+  (when-let [ps (seq (fold/edge-props e))]
+    (str " {" (str/join "; " (for [[k v] ps] (str (name k) " = " v))) "}")))
+
 (defn open-node
   "One node for the model: definition, every relation both ways (the
    learning three by name, a custom ontology in its own words), material,
@@ -116,7 +122,7 @@
           ;; a link the model inferred (the source does not state it) says so,
           ;; with its reason — an agent must tell a quote from a guess
           rel (fn [pred f] (->> es (filter pred) (filter #(or (nil? fence) (fence (f %))))
-                                (map #(str (title kg (f %)) (inferred-note %))) (str/join ", ")))
+                                (map #(str (title kg (f %)) (edge-props-note %) (inferred-note %))) (str/join ", ")))
           objs (if (and fence objects-of) (objects-of id) (fold/concept-objects kg id))
           items (fold/concept-items kg id)
           qs (filter #(and (= id (:concept-id %)) (not (:answer %))) (vals (:questions kg)))
@@ -131,6 +137,9 @@
                                  (let [k (name (or (:kind c) "node")) l (profile/kind-label p (:kind c))]
                                    (str " [" k (when (and l (not= l k)) (str ": " l)) "]"))))
                           (str "definition: " (:definition c))
+                          ;; what a person set on the node (2026-11-19)
+                          (when-let [ps (seq (fold/node-props c))]
+                            (str "properties: " (str/join "; " (for [[k v] ps] (str (name k) " = " v)))))
                           ;; the passage it was written from, as it read then: after an
                           ;; update, set it beside read-source to see what changed
                           (when (seq (:evidence c)) (str "quote from its source: «" (clip (:evidence c) 400) "»"))
@@ -200,7 +209,7 @@
                  (sort-by (juxt (comp name :type) :from :to)))
          label (fn [id] (str (or (get-in kg [:concepts id :title]) (get-in kg [:sources id :title]) id) " (" id ")"))
          lines (for [{:keys [from to type] :as e} (take cap es)]
-                 (str (label from) " —" (profile/label p type) "→ " (label to) (inferred-note e)))]
+                 (str (label from) " —" (profile/label p type) "→ " (label to) (edge-props-note e) (inferred-note e)))]
      (cond
        (and relation (nil? (profile/relation p relation))) (str "no relation " (name relation) " in this ontology (see describe-ontology)")
        (empty? es) "no such edges"

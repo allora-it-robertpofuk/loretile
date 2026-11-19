@@ -2,8 +2,9 @@
   "The graph as ONE markdown file for a coding agent (wiki/Profiles.md).
    Pure: the agent's input is a contract, so it is unit-tested. Every node
    carries its type, definition, typed relations in BOTH directions (the
-   inverse label on the receiving end), its material, sources with anchors
-   and a stale flag — what a README or a wiki dump cannot say."
+   inverse label on the receiving end), its own properties and its edges',
+   its material, sources with anchors and a stale flag — what a README or a
+   wiki dump cannot say."
   (:require [clojure.string :as str]
             [loretile.fold :as fold]
             [loretile.graph-tools :as gt]
@@ -19,6 +20,12 @@
     (str " — *inferred, not stated in the source*"
          (when (seq (:justification e)) (str ": " (str/replace (fold/plain-text (:justification e)) #"\s+" " "))))))
 
+(defn- props-note
+  "An edge's own properties, inline: « {since: 2024; share: 30 %}»."
+  [e]
+  (when-let [ps (seq (fold/edge-props e))]
+    (str " {" (str/join "; " (for [[k v] ps] (str (name k) ": " v))) "}")))
+
 (defn- node-section [kg p {:keys [id definition kind] :as c}]
   (let [es (remove #(= :grounded-in (:type %)) (:edges kg))
         out (sort-by :type (filter #(= id (:from %)) es))
@@ -32,14 +39,16 @@
                        (str "- type: " (name (or kind :concept))
                             (when (fold/stale? kg id) " · **STALE** (its source changed; re-check before relying on it)"))
                        (when-let [a (gt/authorship kg c)] (str "- " a))
+                       (when-let [ps (seq (fold/node-props c))]
+                         (str/join "\n" (for [[k v] ps] (str "- " (name k) ": " v))))
                        (when (seq definition) (str "\n" (fold/plain-text definition)))
                        (when (or (seq out) (seq in)) "")
                        (when (seq out)
                          (str/join "\n" (for [{:keys [to type] :as e} out]
-                                          (str "- " (profile/label p type) " → [" (title kg to) "](#" to ")" (inferred e)))))
+                                          (str "- " (profile/label p type) " → [" (title kg to) "](#" to ")" (props-note e) (inferred e)))))
                        (when (seq in)
                          (str/join "\n" (for [{:keys [from type] :as e} in]
-                                          (str "- " (profile/label p type true) " ← [" (title kg from) "](#" from ")" (inferred e)))))
+                                          (str "- " (profile/label p type true) " ← [" (title kg from) "](#" from ")" (props-note e) (inferred e)))))
                        (when (seq objs)
                          (str "\n" (str/join "\n\n" (for [o objs]
                                                       (str "> " (str/replace (fold/plain-text (:text o)) "\n" "\n> "))))))
