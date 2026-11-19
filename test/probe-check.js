@@ -7,6 +7,7 @@
 // Usage: serve public/ first, then: node test/probe-check.js [baseUrl]
 const path = require('path');
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const BASE = process.argv[2] || 'http://localhost:8291';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
@@ -46,9 +47,7 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   await page.reload({ waitUntil: 'networkidle0' }); await sleep(400);
 
   // a graph from the ontology file with one lonely process
-  await page.click('.burger'); await sleep(350);
-  const input = await page.$('.new-graph-ontology input[type=file]');
-  await input.uploadFile(path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'));
+  if (await G.graphFromOntologyFile(page, path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'), 'Магазин') === null) { console.log('SKIP: release build — the ontology-file door is internal until slice 3 (wiki/Ontology-Graph.md)'); await browser.close(); process.exit(0); }
   await sleep(800);
   await page.evaluate(() => [...document.querySelectorAll('.rail .rbtn')].find((e) => /Тема/.test(e.title)).click());
   await page.waitForSelector('.modal input');

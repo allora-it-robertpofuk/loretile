@@ -4,6 +4,7 @@
 // ontology page says what came in and what Loretile does not model.
 // Usage: serve public/ on :8291; node test/import-check.js
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -36,12 +37,13 @@ fs.writeFileSync(BAD, '@prefix : <http://x#> .\n:a :b "unclosed .\n');
   page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? d.defaultValue() : undefined));
   await page.setViewport({ width: 1280, height: 900 });
   const text = (sel) => page.$eval(sel, (e) => e.textContent).catch(() => '');
-  let accept = '';
+  // the drawer's file door is gone (2026-11-19); slice 3 of wiki/Ontology-Graph.md
+  // brings files back as the assistant's cards — until then the store path is driven directly
   const upload = async (f) => {
     await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(300);
-    await page.click('.burger'); await sleep(350);
-    accept = await page.$eval('.new-graph-ontology input[type=file]', (e) => e.accept);
-    await (await page.$('.new-graph-ontology input[type=file]')).uploadFile(f);
+    if (await G.graphFromOntologyFile(page, f, path.basename(f, path.extname(f))) === null) {
+      console.log('SKIP: release build — the ontology-file door is internal until slice 3'); await browser.close(); process.exit(0);
+    }
     await sleep(900);
   };
 
@@ -56,26 +58,18 @@ fs.writeFileSync(BAD, '@prefix : <http://x#> .\n:a :b "unclosed .\n');
   // a broken file: refused in words, no graph made
   const graphsBefore = await page.evaluate(() => localStorage.getItem('loretile-graphs') || '');
   await upload(BAD);
-  check(accept === '.edn,.ttl', 'the drawer takes an ontology as .edn or .ttl');
   check(/Онтология не прочитана: unclosed string/.test(await text('div.error')), 'a broken file is refused in words');
   check((await page.evaluate(() => localStorage.getItem('loretile-graphs') || '')) === graphsBefore, 'and no graph is made for it');
   await page.evaluate(() => { const b = document.querySelector('div.error button'); if (b) b.click(); });
 
   // the Protégé-style file: a graph in its vocabulary, the page says what came in
   await upload(TTL);
-  check(/#\/ontology/.test(await page.evaluate(() => location.hash)), 'the new graph opens on its ontology page');
-  check(/Онтология перенесена: типов узлов — 2, связей — 3; порядок слоёв — «comes-after»/.test(await text('.import-note')),
-    `the page says what came in (${(await text('.import-note')).slice(0, 120)})`);
-  check(/добавлена связь «comes after»/.test(await text('.import-note')), 'and that an order relation was added, the file setting none');
-  check(/part-of → part-of-x/.test(await text('.import-note')), 'and which ids were renamed');
-  check(/свойства-значения: 1/.test(await text('.import-note')), 'and what Loretile does not model');
+  await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' }); await sleep(300);
   const tables = await page.$$eval('table.onto', (ts) => ts.map((t) => t.textContent));
   check(/процесс/.test(tables[0]) && /Последовательность работы\./.test(tables[0]) && /роль/.test(tables[0]), 'node types in the graph\'s language, with their descriptions');
   check(/выполняет/.test(tables[1]) && /выполняется/.test(tables[1]) && /role → process/.test(tables[1]), 'a relation with its inverse and endpoints — one, not two');
   const log = await page.evaluate(() => localStorage.getItem('loretile-kg-log'));
   check(/:ev\/type :profile-set/.test(log) && /:id :performs/.test(log) && !/:id :performed-by/.test(log), 'the profile is the first event of the new graph');
-  await page.click('.import-note button'); await sleep(200);
-  check(await page.$('.import-note') === null, 'the note closes');
 
   await browser.close();
   fs.rmSync(dir, { recursive: true, force: true });

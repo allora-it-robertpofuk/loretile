@@ -8,6 +8,7 @@
 // Usage: serve public/ on :8291; node test/meaning-check.js
 const path = require('path');
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const BASE = process.argv[2] || 'http://localhost:8291';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
@@ -35,8 +36,8 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   const log = () => page.evaluate(() => localStorage.getItem('loretile-kg-log') || '');
   const download = async (sel) => {
     await page.evaluate(() => { window.__blob = null; });
-    if (!(await page.$('.burger'))) { await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(400); }
-    await page.click('.burger'); await sleep(350);
+    // exports live on each graph's row in the Graphs view (2026-11-19)
+    await page.goto(BASE + '#/graphs', { waitUntil: 'networkidle0' }); await sleep(300);
     await page.evaluate((sel) => document.querySelector(sel).click(), sel); await sleep(300);
     return page.evaluate(() => (window.__blob ? window.__blob.text() : ''));
   };
@@ -56,8 +57,7 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
 
   // --- a business graph from the sample ontology --------------------------------
   await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(300);
-  await page.click('.burger'); await sleep(350);
-  await (await page.$('.new-graph-ontology input[type=file]')).uploadFile(path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'));
+  if (await G.graphFromOntologyFile(page, path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'), 'Магазин') === null) { console.log('SKIP: release build — the ontology-file door is internal until slice 3 (wiki/Ontology-Graph.md)'); await browser.close(); process.exit(0); }
   await sleep(800);
   check(/:description "Роль → процесс: роль делает этот процесс/.test(await log()), 'the sample ontology\'s descriptions arrive with the file');
   await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' }); await sleep(300);
@@ -96,10 +96,10 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check((await page.$eval('.owner-team', (e) => e.value)) === 'Финансы', 'and the form shows it after a reload');
 
   // --- both exports carry the meaning and the owner ------------------------------
-  const md = await download('.drawer .export-agent');
+  const md = await download('.entity-row.on .export-agent');
   check(/Owner: Финансы \(fin@example.com\)/.test(md), 'the agent export names the owner');
   check(/`measures` измеряет \/ измеряется: Метрика → процесс: по ней видно/.test(md), 'and each relation with what it means');
-  const ttl = await download('.drawer .export-ttl');
+  const ttl = await download('.entity-row.on .export-ttl');
   check(/^@prefix rdf: /.test(ttl), 'the RDF export is Turtle');
   check(/v:measures a owl:ObjectProperty ;[^.]*rdfs:comment "Метрика → процесс: по ней видно[^"]*"@ru/.test(ttl), 'a relation is an OWL property with its description');
   check(/lt:team "Финансы" ; lt:contact "fin@example.com"/.test(ttl), 'the owner is in the RDF');

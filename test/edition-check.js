@@ -40,21 +40,22 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
     const map = await page.evaluate(() => ({ empty: !!document.querySelector('.empty'),
       demos: document.querySelectorAll('.demo-row, .demo-pick, .empty-or').length,
       add: !!document.querySelector('.empty button.primary') }));
-    await page.click('.burger'); await sleep(400);
-    const drawer = await page.evaluate(() => ({ demos: !!document.querySelector('.drawer .nav-demos'),
-      import: !!document.querySelector('.drawer input[type=file][accept=".edn"]') }));
-    return { map, drawer };
+    // demos and import live in the Graphs view (2026-11-19); a hash change keeps the served page
+    await page.evaluate(() => { location.hash = '#/graphs'; }); await sleep(400);
+    const graphs = await page.evaluate(() => ({ demos: !!document.querySelector('.graphs-page .add-demo'),
+      import: !!document.querySelector('.graphs-page input[type=file][accept=".edn"]') }));
+    return { map, graphs };
   };
 
   const plain = await open(false);
   const a = await look(plain.page);
-  check(a.map.demos >= 3 && a.drawer.demos, 'the standard build offers the demo graphs (map and drawer)');
+  check(a.map.demos >= 3 && a.graphs.demos, 'the standard build offers the demo graphs (map and Graphs view)');
 
   const ent = await open(true);
   const b = await look(ent.page);
   check(b.map.empty && b.map.add, 'the enterprise build: the empty map renders, «add a topic» and the assistant stay');
   check(b.map.demos === 0, 'no demo control on the empty map (' + b.map.demos + ')');
-  check(!b.drawer.demos && b.drawer.import, 'no demo entry in the drawer; import stays');
+  check(!b.graphs.demos && b.graphs.import, 'no demo entry in the Graphs view; import stays');
   check(ent.demoRequests.length === 0, 'no demo file is ever requested (' + ent.demoRequests.length + ')');
 
   await browser.close();

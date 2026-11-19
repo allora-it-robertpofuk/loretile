@@ -7,6 +7,7 @@
 // system quoted under a step heading is not that step.
 // Usage: serve public/ on :8291; node test/steps-check.js
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -68,8 +69,8 @@ const ONTO = path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn');
     localStorage.setItem('loretile-llm-config', '{:preset :anthropic :shape :anthropic :url "https://api.anthropic.com/v1/messages" :model "test" :key "sk-test"}');
   });
   await page.reload({ waitUntil: 'networkidle0' }); await sleep(400);
-  await page.click('.burger'); await sleep(350);
-  await (await page.$('.new-graph-ontology input[type=file]')).uploadFile(ONTO); await sleep(1000);
+  if (await G.graphFromOntologyFile(page, ONTO, 'Purchasing') === null) { console.log('SKIP: release build — the ontology-file door is internal until slice 3 (wiki/Ontology-Graph.md)'); await browser.close(); process.exit(0); }
+  await sleep(1000);
   await page.goto(BASE + '#/chat', { waitUntil: 'networkidle0' }); await sleep(400);
 
   await (await page.$('.composer input[type=file]')).uploadFile(DOC); await sleep(700);

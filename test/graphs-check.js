@@ -4,6 +4,7 @@
 // folding at the publication they started under, while the author edits on.
 // Usage: serve public/ first, then: node test/graphs-check.js [baseUrl]
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const BASE = process.argv[2] || 'http://localhost:8291';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
@@ -31,41 +32,30 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   await sleep(300);
 
   const nodes = () => page.evaluate(() => document.querySelectorAll('.node').length);
-  const openDrawer = async () => { await page.click('.burger'); await sleep(350); };
-  const drawerClick = async (re) => {
-    await page.evaluate((r) => [...document.querySelectorAll('.drawer nav a')]
-      .find((a) => new RegExp(r).test(a.textContent)).click(), re.source);
-    await sleep(400);
-  };
 
   // a fresh install has one graph, and it is the personal one
-  await openDrawer();
-  check((await page.$$('.drawer .graph-row')).length === 1, 'a fresh install has exactly one graph');
-  check(/Мой граф/.test(await page.$eval('.drawer .graph-row', (e) => e.textContent)),
-    'and it is the personal graph, where bring-your-own-material starts');
-  await page.keyboard.press('Escape'); await sleep(200);
+  const rows0 = await G.listRows(page, BASE);
+  check(rows0.length === 1, 'a fresh install has exactly one graph');
+  check(/Мой граф/.test(rows0[0]), 'and it is the personal graph, where bring-your-own-material starts');
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(300);
 
   // load a demo: it lands in a graph of its OWN, the personal one is untouched
   await page.click('.load-demo');
   await sleep(2200);
   const demoNodes = await nodes();
   check(demoNodes > 10, 'the demo graph loaded');
-  await openDrawer();
-  check((await page.$$('.drawer .graph-row')).length === 2, 'the demo did not land in the personal graph');
-  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')]
-    .find((e) => /Мой граф/.test(e.textContent)).click());
+  check((await G.listRows(page, BASE)).length === 2, 'the demo did not land in the personal graph');
+  await G.openGraph(page, BASE, /Мой граф/);
   await sleep(600);
   check(await nodes() === 0, 'switching back, the personal graph is still empty');
   check(await page.$('.load-demo') !== null, 'and it offers the empty-map start again');
 
   // a graph of your own: create, author in it, and it stays separate
-  await openDrawer();
-  await drawerClick(/Новый граф/);
-  await openDrawer();
-  check((await page.$$('.drawer .graph-row')).length === 3, 'a new graph was created');
-  check(/Мой учебник/.test(await page.$eval('.drawer .graph-row.on', (e) => e.textContent)),
-    'and it is the one now open');
-  await page.keyboard.press('Escape'); await sleep(200);
+  await G.newGraph(page, BASE);
+  const rows3 = await G.listRows(page, BASE);
+  check(rows3.length === 3, 'a new graph was created');
+  check(rows3.some((r) => /^\*Мой учебник/.test(r)), 'and it is the one now open');
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(300);
   await page.evaluate(() => [...document.querySelectorAll('.rail .rbtn')].find((e) => /Тема/.test(e.title)).click());
   await page.waitForSelector('.modal input');
   await page.type('.modal input', 'Моя тема из PDF');
@@ -75,14 +65,10 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check(await nodes() === 1, 'a topic authored in my own graph');
   const ns = await page.evaluate(() => (localStorage.getItem('loretile-kg-log').match(/:ev\/ns "([^"]+)"/) || [])[1]);
   check(/^g-/.test(ns), `the event carries the real namespace, not the "demo" stub (${ns})`);
-  await openDrawer();
-  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')]
-    .find((e) => /SQL|аналитик/.test(e.textContent)).click());
+  await G.openGraph(page, BASE, /SQL|аналитик/);
   await sleep(700);
   check(await nodes() === demoNodes, 'switching away and the demo graph is intact');
-  await openDrawer();
-  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')]
-    .find((e) => /Мой учебник/.test(e.textContent)).click());
+  await G.openGraph(page, BASE, /Мой учебник/);
   await sleep(700);
   check(await nodes() === 1, 'and my own graph kept its topic');
 
@@ -104,9 +90,7 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check(await page.$eval('.panel', (e) => e.textContent).then((t) => !/GROUP BY/.test(t)).catch(() => true),
     'and never shows a same-slug node of the open graph');
   await page.evaluate(() => { location.hash = '#/'; });
-  await openDrawer();
-  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')]
-    .find((e) => /Мой учебник/.test(e.textContent)).click());
+  await G.openGraph(page, BASE, /Мой учебник/);
   await sleep(700);
 
   // --- publish and pin -------------------------------------------------------
@@ -129,9 +113,7 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   // — the learner needed no such switch, which is the two hats working.
   await page.goto(BASE + '#/', { waitUntil: 'networkidle0' });
   await sleep(500);
-  await openDrawer();
-  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')]
-    .find((e) => /SQL|аналитик/.test(e.textContent)).click());
+  await G.openGraph(page, BASE, /SQL|аналитик/);
   await sleep(700);
   await page.goto(BASE + '#/c/' + encodeURIComponent('group-by'), { waitUntil: 'networkidle0' });
   await sleep(800);
@@ -223,9 +205,7 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
       return window.__setItem(k, v);
     };
   });
-  await openDrawer();
-  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')]
-    .find((e) => /Мой граф/.test(e.textContent)).click());
+  await G.openGraph(page, BASE, /Мой граф/);
   await sleep(700);
   check(await nodes() === beforeNodes, 'a switch that cannot shelve leaves the open graph untouched');
   check(await page.$('.error') !== null, 'and says so instead of failing silently');

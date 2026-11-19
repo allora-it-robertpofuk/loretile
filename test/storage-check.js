@@ -12,6 +12,7 @@
 //  A11 when spending cannot be recorded, the next model call is refused
 // Usage: serve public/ on :8291; node test/storage-check.js
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -79,9 +80,8 @@ fs.writeFileSync(DOC, '# Notes\nA short note about joins.\n');
 
   // --- A15 ------------------------------------------------------------------
   const curBefore = await ls('loretile-graph');
-  await page.click('.burger'); await sleep(350);
-  const rows = await page.$$eval('.drawer .graph-row', (es) => es.map((e) => e.textContent));
-  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')].find((e) => !e.classList.contains('on')).click());
+  const rows = await G.listRows(page, BASE);
+  await page.evaluate(() => [...document.querySelectorAll('.entity-row')].find((e) => !e.classList.contains('on')).querySelector('.entity-title').click());
   await sleep(500);
   check((await ls('loretile-graph')) === curBefore, 'A15: a refused switch leaves `current` on the open graph');
   check((await nodes()).length === sqlNodes, 'A15: and the open graph still shows (' + rows.length + ' graphs)');
@@ -96,8 +96,8 @@ fs.writeFileSync(DOC, '# Notes\nA short note about joins.\n');
     if (await page.$('.orbit-del')) { await page.click('.orbit-del'); await sleep(150); }
   }
   check(await page.$('.orbit-del.pending') !== null, 'A7: the removal ring is armed');
-  await page.click('.burger'); await sleep(350);
-  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')].find((e) => !e.classList.contains('on')).click());
+  await page.goto(BASE + '#/graphs', { waitUntil: 'networkidle0' }); await sleep(250);
+  await page.evaluate(() => [...document.querySelectorAll('.entity-row')].find((e) => !e.classList.contains('on')).querySelector('.entity-title').click());
   await sleep(500);
   const otherBefore = await ls('loretile-kg-log');
   await sleep(6800);

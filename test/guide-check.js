@@ -46,8 +46,8 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   // two graphs: vineyard, then SQL (left open) — the catalog must span both
   await page.evaluate(() => [...document.querySelectorAll('button.demo-row')].find((b) => /виноград/i.test(b.textContent)).click());
   await sleep(1800);
-  await page.click('.burger'); await sleep(300);
-  await page.evaluate(() => [...document.querySelectorAll('.drawer nav a')].find((a) => /Демо-графы/.test(a.textContent)).click());
+  await page.goto(BASE + '#/graphs', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.click('.graphs-page .add-demo');
   await sleep(300);
   await page.evaluate(() => [...document.querySelectorAll('.modal .demo-row')].find((b) => b.textContent.includes('SQL')).click());
   await sleep(2000);

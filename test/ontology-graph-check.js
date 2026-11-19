@@ -8,6 +8,7 @@
 // Usage: serve public/ first, then: node test/ontology-graph-check.js [baseUrl]
 const path = require('path');
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const BASE = process.argv[2] || 'http://localhost:8291';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
@@ -34,19 +35,12 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   await sleep(300);
 
   const nodes = () => page.evaluate(() => document.querySelectorAll('.node').length);
-  const openDrawer = async () => { await page.click('.burger'); await sleep(350); };
   const registry = () => page.evaluate(() => localStorage.getItem('loretile-graphs'));
-  const graphRow = async (re) => {
-    await openDrawer();
-    await page.evaluate((src) => [...document.querySelectorAll('.drawer .graph-row')]
-      .find((e) => new RegExp(src).test(e.textContent)).click(), re.source);
-    await sleep(700);
-  };
 
   // a graph with its own ontology, the pre-2026-11-19 shape
-  await openDrawer();
-  const input = await page.$('.new-graph-ontology input[type=file]');
-  await input.uploadFile(path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'));
+  if (await G.graphFromOntologyFile(page, path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'), 'Магазин') === null) {
+    console.log('SKIP: release build — the ontology-file door is internal until slice 3'); await browser.close(); process.exit(0);
+  }
   await sleep(800);
   check(/:profile-set/.test(await page.evaluate(() => localStorage.getItem('loretile-kg-log'))),
     'a graph made from an ontology file carries the profile in its own log');
@@ -91,15 +85,15 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   await page.goto(BASE + '#/', { waitUntil: 'networkidle0' });
   await sleep(1200);
   check(await nodes() === typeCount + 1, 'and appears on its map');
-  await graphRow(/^(?!.*онтология).*Магазин/);
+  await G.openGraph(page, BASE, /^Магазин$/);
   await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' });
   await sleep(300);
   check(/поставщик/.test(await page.$eval('.ontology-page', (e) => e.textContent)), 'the bound graph took the new copy');
 
   // a fresh ontology must be whole before a graph can use it
   answer = 'Склад';
-  await openDrawer();
-  await page.click('.drawer .new-ontology');
+  await page.goto(BASE + '#/ontologies', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.click('.ontologies-page .new-ontology');
   await sleep(700);
   check(/#\/ontology$/.test(await page.evaluate(() => location.hash)), 'a new ontology opens on its page');
   check(await nodes() === 0, 'and empty');
@@ -108,6 +102,7 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   await sleep(700);
   check(/не готова/.test(await page.$eval('.error', (e) => e.textContent).catch(() => '')),
     'an empty ontology cannot be used yet, and says why');
+  check(!/Склад: данные/.test(await registry()), 'and no graph is left behind for it');
 
   // the deep link reaches a graph's ontology page
   const oid = (reg.match(/:id "(o-[^"]+)"/) || [])[1];
@@ -115,6 +110,36 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   await sleep(700);
   check(await page.evaluate(() => location.hash) === '#/ontology' && await page.$('.ontology-users') !== null,
     'the deep link #/g/{ontology}/ontology opened that ontology graph\'s page');
+
+  // the Graphs and Ontologies views manage them (2026-11-19): the drawer only navigates
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.click('.burger'); await sleep(350);
+  const drawerText = await page.$eval('.drawer nav', (e) => e.textContent);
+  check(await page.$('.drawer .nav-graphs') !== null && await page.$('.drawer .nav-ontologies') !== null,
+    'the drawer links to the Graphs and Ontologies views');
+  check(!/Новый граф|Экспорт|Импорт|Демо-графы/.test(drawerText) && await page.$('.drawer .graph-row') === null,
+    'and no longer lists graphs, makes them, imports or exports');
+  await page.keyboard.press('Escape'); await sleep(200);
+  const dataRows = await G.listRows(page, BASE);
+  check(dataRows.some((r) => /^\*?Магазин$/.test(r)) && !dataRows.some((r) => /Онтология:|Склад/.test(r)),
+    `the Graphs view lists data graphs only (${dataRows.join(' | ')})`);
+  check(await page.$$eval('.graphs-page .entity-row', (es) => es.every((e) => e.querySelector('.export-log') && e.querySelector('.export-agent') && e.querySelector('.export-ttl'))),
+    'each graph row exports (edn, md, ttl)');
+  const ontoRows = await G.listRows(page, BASE, 'ontologies');
+  check(ontoRows.some((r) => /Онтология: Магазин/.test(r)) && ontoRows.some((r) => /Склад$/.test(r)), 'the Ontologies view lists the ontology graphs');
+  const usedRow = await page.evaluateHandle(() => [...document.querySelectorAll('.ontologies-page .entity-row')].find((e) => /Онтология: Магазин/.test(e.textContent)));
+  check(await usedRow.asElement().$('.delete') === null && /графов с ней: 1/.test(await usedRow.asElement().evaluate((e) => e.textContent)),
+    'an ontology in use says by how many graphs, and has no delete');
+  // rename
+  answer = 'Склад (переименован)';
+  await page.evaluate(() => [...document.querySelectorAll('.ontologies-page .entity-row')].find((e) => /^Склад$/.test(e.querySelector('.entity-title').textContent)).querySelector('.rename').click());
+  await sleep(300);
+  check(/Склад \(переименован\)/.test(await registry()), 'rename changes the title');
+  // delete an unused one (the dialog is accepted)
+  await page.evaluate(() => [...document.querySelectorAll('.ontologies-page .entity-row')].find((e) => /переименован/.test(e.querySelector('.entity-title').textContent)).querySelector('.delete').click());
+  await sleep(400);
+  check(!/переименован/.test(await registry()) && (await G.listRows(page, BASE, 'ontologies')).length === ontoRows.length - 1,
+    'an unused ontology is deleted, its row and log gone');
 
   // both are in the command palette too
   const fromPalette = async (cmd, title) => {

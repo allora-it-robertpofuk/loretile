@@ -58,6 +58,8 @@
               (str/starts-with? h "#/chat") {:view :chat}
               (= h "#/settings") {:view :settings}
               (= h "#/ontology") {:view :ontology}
+              (= h "#/graphs") {:view :graphs}
+              (= h "#/ontologies") {:view :ontologies}
               (str/starts-with? h "#/learn/") {:view :learn :id (js/decodeURIComponent (subs h 8))}
               (str/starts-with? h "#/courses") {:view :catalog}
               :else {:view :map}))
@@ -1892,6 +1894,7 @@
        :ontology-elsewhere (t :ui/error-ontology-elsewhere {"{title}" (store/graph-title detail)})
        :ontology-breaks-data (t :ui/error-ontology-breaks-data {"{detail}" (pr-str detail)})
        :no-whole-ontology (t :ui/error-no-whole-ontology)
+       :ontology-in-use (t :ui/error-ontology-in-use)
        :bad-profile (t :ui/error-bad-profile {"{detail}" (pr-str detail)})
        :bad-ontology (t :ui/error-bad-ontology {"{detail}" (str detail)})
        :bad-split (t :ui/error-bad-split {"{detail}" (t (keyword "ui" (str "split-why-" (name detail))))})
@@ -1905,13 +1908,6 @@
        :past-view (t :ui/error-past-view)
        (pr-str [error detail]))
      [:button {:on-click #(reset! store/last-error nil) :title (t :ui/close) :aria-label (t :ui/close)} [icons/icon :close]]]))
-
-(defn import-button []
-  [:label {:role "button" :tab-index 0} [icons/icon :inbox] (t :ui/import)
-   [:input {:type "file" :accept ".edn" :style {:display "none"}
-            :on-change (fn [ev]
-                         (when-let [f (aget (.. ev -target -files) 0)]
-                           (-> (.text f) (.then store/import-edn!))))}]])
 
 ;; kintale's graph-side rail: icon-only round buttons stacked at the
 ;; map's bottom-right, assistant at the bottom (Denis 2026-09-08 — the
@@ -2116,51 +2112,6 @@
                            :on-change #(llm/set-daily-budget! (js/parseInt (.. % -target -value)))}]
      [:p.muted.budget-usage (t :ui/budget-usage {"{used}" tokens "{budget}" budget "{calls}" calls})]
      (when (or corrupt (nil? budget)) [:p.budget-corrupt (t :ui/budget-corrupt)])]))
-
-(defonce import-note (r/atom nil))
-
-(defn- import-note-view
-  "What an imported Turtle ontology brought in, and what Loretile does not
-   model (counted, never silently dropped) — on the ontology page of the
-   graph it made, until closed."
-  []
-  (let [{:keys [graph report]} @import-note]
-    (when (and report (= graph @store/current))
-      (let [{:keys [types relations ordering ordering-added renamed skipped]} report]
-        [:div.import-note
-         [:p (t :ui/onto-imported {"{t}" types "{r}" relations "{o}" ordering})
-          (when ordering-added [:span " " (t :ui/onto-order-added)])]
-         (when (seq renamed) [:p.muted (t :ui/onto-renamed {"{list}" (str/join ", " renamed)})])
-         (when (seq skipped)
-           [:p.muted (t :ui/onto-skipped) " "
-            (str/join " · " (for [[k n] skipped] (str (t (keyword "ui" (str "onto-skipped-" (name k))))  ": " n)))])
-         [:button {:on-click #(reset! import-note nil)} (t :ui/close)]]))))
-
-(defn- ontology-graph-button
-  "«New graph from an ontology»: an EDN file naming node types and
-   relations (wiki/Profiles.md) → a graph that speaks it. The file is read
-   and validated FIRST; a bad one creates nothing. Title asked after, so a
-   cancelled prompt costs nothing either."
-  [close!]
-  [:label.new-graph-ontology {:role "button" :tab-index 0} [icons/icon :lineage] (t :ui/new-graph-ontology)
-   [:input {:type "file" :accept ".edn,.ttl" :style {:display "none"}
-            :on-change (fn [ev]
-                         (when-let [f (aget (.. ev -target -files) 0)]
-                           (set! (.. ev -target -value) "")
-                           (close!)
-                           (-> (.text f)
-                               (.then (fn [text]
-                                        (let [{:keys [profile report error]} (store/read-profile text (.-name f))]
-                                          (if error
-                                            (reset! store/last-error error)
-                                            (when-let [title (js/prompt (t :ui/new-graph-prompt) (:title profile))]
-                                              (when (seq (str/trim title))
-                                                (store/new-graph! (str/trim title) {:profile profile})
-                                                ;; an imported ontology: show what came in and what did not
-                                                (if report
-                                                  (do (reset! import-note {:graph @store/current :report report})
-                                                      (goto! "#/ontology"))
-                                                  (goto! "#/")))))))))))}]])
 
 (defn- cq-form
   "A competency question (wiki/Profiles.md): the question in words, and —
@@ -2381,12 +2332,16 @@
               [:li [:a {:href (str "#/g/" (js/encodeURIComponent (:id g)) "/")} (:title g)]])]
        [:p.muted (t :ui/ontology-users-none)])
      [:button.new-graph-from-ontology
+      ;; refused BEFORE a graph is made: an unfinished ontology left an
+      ;; empty unbound graph behind
       {:on-click (fn []
-                   (when-let [title (js/prompt (t :ui/new-graph-prompt))]
-                     (when (seq (str/trim title))
-                       (when-let [gid (store/new-graph! (str/trim title))]
-                         (when-let [err (store/bind! gid oid)] (reset! store/last-error err))
-                         (goto! "#/")))))}
+                   (if-not (store/whole-ontology? oid)
+                     (reset! store/last-error {:error :no-whole-ontology})
+                     (when-let [title (js/prompt (t :ui/new-graph-prompt))]
+                       (when (seq (str/trim title))
+                         (when-let [gid (store/new-graph! (str/trim title))]
+                           (when-let [err (store/bind! gid oid)] (reset! store/last-error err))
+                           (goto! "#/"))))))}
       (t :ui/new-graph-from-ontology)]]))
 
 (defn ontology-page
@@ -2416,7 +2371,6 @@
         (when-let [{:keys [error detail]} (get @store/sync-refused @store/current)]
           [:span.sync-refused " " (t :ui/sync-refused {"{detail}" (if (= :ontology-breaks-data error) (pr-str detail) (name error))})])])
      (when onto? [ontology-users-section])
-     [import-note-view]
      [owner-section kg]
      (when-not fixed? [:p.muted.vocab-hint (t :ui/vocab-hint)])
      [:section
@@ -2462,6 +2416,69 @@
      ;; questions and pitfalls are checked over DATA — in the graphs that use it
      (when-not (or learning? onto?) [cq-section kg])
      (when-not (or learning? onto?) [pitfalls-section kg])]))
+
+;; --- graphs and ontologies, managed (Denis 2026-11-19) -------------------------
+;; The drawer only navigates; each kind of graph has a list view where it is
+;; opened, renamed, exported and deleted. Delete is absent for an ontology a
+;; graph on this device still uses.
+
+(defn- entity-row [g onto?]
+  (let [id (:id g)
+        open? (= id @store/current)
+        users (when onto? (store/ontology-users id))]
+    [:li.entity-row {:class (when open? "on")}
+     [:a.entity-title {:href (str "#/g/" (js/encodeURIComponent id) "/")} (:title g)]
+     [:span.muted.entity-meta
+      (cond onto? (t :ui/used-by {"{n}" (count users)})
+            (:ontology g) (str (t :ui/ontology-of) " " (store/graph-title (:ontology g))))
+      (when open? (str " · " (t :ui/open-now)))]
+     [:span.entity-actions
+      [:button.rename {:title (t :ui/rename) :aria-label (t :ui/rename)
+                       :on-click #(when-let [v (js/prompt (t :ui/rename-prompt) (:title g))]
+                                    (when (seq (str/trim v)) (store/rename-graph! id (str/trim v))))}
+       [icons/icon :pencil]]
+      [:button.export-log {:title (t :ui/export) :on-click #(store/export-edn! id)} "edn"]
+      (when-not onto?
+        [:<>
+         [:button.export-agent {:title (t :ui/export-agent) :on-click #(store/export-md! id)} "md"]
+         [:button.export-ttl {:title (t :ui/export-turtle) :on-click #(store/export-ttl! id)} "ttl"]])
+      (when (empty? users)
+        [:button.delete {:title (t :ui/delete) :aria-label (t :ui/delete)
+                         :on-click #(when (js/confirm (t :ui/delete-confirm {"{title}" (:title g)}))
+                                      (store/delete-graph! id))}
+         [icons/icon :trash]])]]))
+
+(defn- import-graph-button []
+  [:label.btn.import-graph {:role "button" :tab-index 0} [icons/icon :inbox] (t :ui/import)
+   [:input {:type "file" :accept ".edn" :style {:display "none"}
+            :on-change (fn [ev]
+                         (when-let [f (aget (.. ev -target -files) 0)]
+                           (-> (.text f)
+                               (.then #(when (store/import-as-new-graph! (str/replace (.-name f) #"\.edn$" "") %)
+                                         (goto! "#/"))))))}]])
+
+(defn graphs-page []
+  [:div.settings-page.graphs-page
+   [:a.back {:href "#/"} (t :ui/back-to-map)]
+   [:h2 (t :ui/graphs)]
+   [:div.page-actions
+    [:button.primary.new-graph {:on-click new-graph-asked!} [icons/icon :plus] (t :ui/new-graph)]
+    (when demos-on?
+      [:button.add-demo {:on-click #(reset! demo-picker-open true)} [icons/icon :graph] (t :ui/demos-title)])
+    [import-graph-button]]
+   [:ul.entity-list
+    (for [g (remove :ontology? @store/graphs)] ^{:key (:id g)} [entity-row g false])]])
+
+(defn ontologies-page []
+  (let [os (filter :ontology? @store/graphs)]
+    [:div.settings-page.ontologies-page
+     [:a.back {:href "#/"} (t :ui/back-to-map)]
+     [:h2 (t :ui/ontologies)]
+     [:div.page-actions
+      [:button.primary.new-ontology {:on-click new-ontology-asked!} [icons/icon :plus] (t :ui/new-ontology)]]
+     (if (seq os)
+       [:ul.entity-list (for [g os] ^{:key (:id g)} [entity-row g true])]
+       [:p.muted (t :ui/ontologies-none)])]))
 
 (defn settings-page []
   [:div.settings-page
@@ -2512,34 +2529,10 @@
          [:a {:role "button" :tab-index 0 :on-click #(go "#/")} [icons/icon :graph] (t :ui/map)]
          (when (profile/learnable? (store/profile))
            [:a {:role "button" :tab-index 0 :on-click #(go "#/courses")} [icons/icon :notes] (t :ui/courses)])
-         ;; several graphs side by side (wiki §9): the author works in one
-         ;; at a time; the open one is marked
-         [:div.dsec.dgraphs (t :ui/graphs)]
-         (for [g @store/graphs]
-           ^{:key (:id g)}
-           [:a.graph-row {:role "button" :tab-index 0
-                          :class (when (= (:id g) @store/current) "on")
-                          :on-click (fn [] (close!) (store/switch-graph! (:id g)) (goto! "#/"))}
-            [icons/icon (if (:ontology? g) :lineage :graph)] (:title g)
-            (when (:ontology? g) [:span.muted.graph-kind (t :ui/ontology-graph)])])
-         [:a.new-ontology {:role "button" :tab-index 0
-                           :on-click (fn [] (close!) (new-ontology-asked!))}
-          [icons/icon :lineage] (t :ui/new-ontology)]
-         [:a {:role "button" :tab-index 0
-              :on-click (fn [] (close!) (new-graph-asked!))}
-          [icons/icon :plus] (t :ui/new-graph)]
-         [ontology-graph-button close!]
-         ;; the assistant interviews the author and derives the ontology
-         ;; from competency questions (wiki/Profiles.md §CQ)
-         [:a.new-graph-interview {:role "button" :tab-index 0
-                                  :on-click (fn []
-                                              (close!)
-                                              (when-let [title (js/prompt (t :ui/new-graph-interview-prompt))]
-                                                (when (seq (str/trim title))
-                                                  (when-let [id (store/new-graph! (str/trim title))]
-                                                    (chat/start-ontology-interview! id)
-                                                    (goto! "#/chat")))))}
-          [icons/icon :chat] (t :ui/new-graph-interview)]
+         ;; graphs and ontologies are managed in their own views (Denis
+         ;; 2026-11-19): open, rename, export, delete — the drawer only navigates
+         [:a.nav-graphs {:role "button" :tab-index 0 :on-click #(go "#/graphs")} [icons/icon :graph] (t :ui/graphs)]
+         [:a.nav-ontologies {:role "button" :tab-index 0 :on-click #(go "#/ontologies")} [icons/icon :lineage] (t :ui/ontologies)]
          [:div.dsep]
          ;; merge files waiting on the bucket for the open graph (loretile.merge)
          (when-let [ms (seq (mrg/pending))]
@@ -2554,17 +2547,6 @@
          (when (profile/learnable? (store/profile))
            [:a {:role "button" :tab-index 0 :on-click #(go "#/course/new")} [icons/icon :notes] (t :ui/new-course)])
          [:a.nav-ontology {:role "button" :tab-index 0 :on-click #(go "#/ontology")} [icons/icon :lineage] (t :ui/ontology)]
-         [:a {:role "button" :tab-index 0 :on-click (fn [] (close!) (store/export-edn!))}
-          [icons/icon :open-ext] (t :ui/export)]
-         [:a.export-agent {:role "button" :tab-index 0 :on-click (fn [] (close!) (store/export-md!))}
-          [icons/icon :open-ext] (t :ui/export-agent)]
-         [:a.export-ttl {:role "button" :tab-index 0 :on-click (fn [] (close!) (store/export-ttl!))}
-          [icons/icon :open-ext] (t :ui/export-turtle)]
-         [import-button]
-         (when demos-on?
-           [:a.nav-demos {:role "button" :tab-index 0
-                          :on-click (fn [] (close!) (reset! demo-picker-open true))}
-            [icons/icon :graph] (t :ui/demos-title)])
          [:a {:role "button" :tab-index 0
               :on-click (fn [] (close!) (goto! "#/") (js/setTimeout tour/start-map-tour! 200))}
           [icons/icon :info] (t :ui/show-tour)]
@@ -2760,6 +2742,8 @@
          :chat [:div.split split [map-view kg] [chat/chat-view]]
          :settings [settings-page]
          :ontology [ontology-page kg]
+         :graphs [graphs-page]
+         :ontologies [ontologies-page]
          ;; the assistant lives where you already are (Assistant design #1):
          ;; on the catalog, in learner mode, beside the courses
          :catalog [:div.split.catalog-split {:class "win-normal"} [catalog kg] [guide/view]]

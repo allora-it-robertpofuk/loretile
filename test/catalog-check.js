@@ -4,6 +4,7 @@
 // the card, and that the palette groups the two session kinds apart.
 // Usage: serve public/ first, then: node test/catalog-check.js [baseUrl]
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const fs = require('fs');
 const BASE = process.argv[2] || 'http://localhost:8291';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -42,8 +43,8 @@ for (const line of fs.readFileSync(__dirname + '/../kg/demo/sql.ru.edn', 'utf8')
   // each demo is its OWN graph: the map shows one at a time, the catalog spans all
   const sqlNodes = await page.evaluate(() => document.querySelectorAll('.node').length);
   for (const name of ['Информационная', 'виноградар']) {
-    await page.click('.burger'); await sleep(300);
-    await page.evaluate(() => [...document.querySelectorAll('.drawer nav a')].find((a) => /Демо-графы/.test(a.textContent)).click());
+    await page.goto(BASE + '#/graphs', { waitUntil: 'networkidle0' }); await sleep(300);
+    await page.click('.graphs-page .add-demo');
     await sleep(300);
     await page.evaluate((n) => [...document.querySelectorAll('.modal .demo-row')].find((b) => b.textContent.includes(n)).click(), name);
     await sleep(2200);
@@ -51,12 +52,12 @@ for (const line of fs.readFileSync(__dirname + '/../kg/demo/sql.ru.edn', 'utf8')
   const lastNodes = await page.evaluate(() => document.querySelectorAll('.node').length);
   check(lastNodes > 10 && lastNodes < sqlNodes + 10,
     `the map shows ONE graph at a time, not all three merged (${sqlNodes} then ${lastNodes})`);
-  await page.click('.burger'); await sleep(300);
   // the personal starting graph plus one per demo — «Мой граф» is where
   // bring-your-own-PDF begins, so it stays
-  check((await page.$$('.drawer .graph-row')).length === 4, 'the drawer lists the personal graph and all three demos');
-  check((await page.$$('.drawer .graph-row.on')).length === 1, 'exactly one graph is open');
-  await page.keyboard.press('Escape'); await sleep(200);
+  const rows = await G.listRows(page, BASE);
+  check(rows.length === 4, 'the Graphs view lists the personal graph and all three demos');
+  check(rows.filter((r) => r.startsWith('*')).length === 1, 'exactly one graph is open');
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(600);
 
   const text = (sel) => page.$eval(sel, (e) => e.textContent).catch(() => '');
   const LIVE = '.qcard:not(.done)';
@@ -153,16 +154,15 @@ for (const line of fs.readFileSync(__dirname + '/../kg/demo/sql.ru.edn', 'utf8')
   // re-picking a loaded demo SWITCHES to its graph, never duplicates it
   await page.goto(BASE + '#/', { waitUntil: 'networkidle0' });
   await sleep(600);
-  await page.click('.burger'); await sleep(300);
-  await page.evaluate(() => [...document.querySelectorAll('.drawer nav a')].find((a) => /Демо-графы/.test(a.textContent)).click());
+  await page.goto(BASE + '#/graphs', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.click('.graphs-page .add-demo');
   await sleep(300);
   await page.evaluate(() => [...document.querySelectorAll('.modal .demo-row')].find((b) => b.textContent.includes('SQL')).click());
   await sleep(1500);
   check(await page.evaluate(() => document.querySelectorAll('.node').length) === sqlNodes,
     're-picking a demo switches to its graph rather than duplicating it');
-  await page.click('.burger'); await sleep(300);
-  check((await page.$$('.drawer .graph-row')).length === 4, 'and no extra graph appeared');
-  await page.keyboard.press('Escape'); await sleep(200);
+  check((await G.listRows(page, BASE)).length === 4, 'and no extra graph appeared');
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(600);
 
   // the palette keeps the two kinds apart
   await page.goto(BASE + '#/', { waitUntil: 'networkidle0' });

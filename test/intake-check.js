@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const BASE = process.argv[2] || 'http://localhost:8291';
 const CHROME = process.env.CHROME_BIN || '/usr/bin/google-chrome';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -143,13 +144,7 @@ fs.writeFileSync(FIXTURE, Array.from({ length: 12 }, (_, i) =>
   check(/связь/.test(txt) && !/ждут/.test(txt), 'links appear once their topics exist');
 
   // another graph: the cards stay, but cannot be accepted there
-  await page.click('.burger, .hburger, header button').catch(() => {});
-  await sleep(200);
-  const newGraph = await page.$$('.drawer nav a');
-  for (const a of newGraph) {
-    if (/Новый граф/.test(await (await a.getProperty('textContent')).jsonValue())) { await a.click(); break; }
-  }
-  await sleep(400);
+  await G.newGraph(page, BASE);
   await page.goto(BASE + '#/chat', { waitUntil: 'networkidle0' });
   await sleep(300);
   check(await page.$('.card-foreign') !== null, 'cards from another graph are flagged');

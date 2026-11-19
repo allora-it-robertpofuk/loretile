@@ -44,11 +44,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (ok && NO_DEMOS) {
     await sleep(500);
     const onMap = await page.evaluate(() => ({ empty: !!document.querySelector('.empty'), demos: document.querySelectorAll('.demo-row, .demo-pick, .empty-or').length }));
-    await page.click('.burger').catch(() => {}); await sleep(400);
-    const inDrawer = await page.evaluate(() => !!document.querySelector('.drawer') && !document.querySelector('.drawer .nav-demos'));
+    await page.evaluate(() => { location.hash = '#/graphs'; }); await sleep(400);
+    const inDrawer = await page.evaluate(() => !!document.querySelector('.graphs-page') && !document.querySelector('.graphs-page .add-demo'));
     if (!onMap.empty) errors.push('no-demos: the empty map did not render');
     if (onMap.demos) errors.push('no-demos: the empty map offers demo graphs (' + onMap.demos + ' controls)');
-    if (!inDrawer) errors.push('no-demos: the drawer offers demo graphs (or did not open)');
+    if (!inDrawer) errors.push('no-demos: the Graphs view offers demo graphs (or did not open)');
     if (demoRequests.length) errors.push('no-demos: demo files requested: ' + demoRequests.join(', '));
   }
   await browser.close();

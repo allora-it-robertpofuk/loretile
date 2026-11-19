@@ -4,6 +4,7 @@
 // topic's material; «patch» stales nothing; «separate document» asks nothing.
 // Usage: make engines; serve public/ on :8291; node test/reupload-check.js
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -121,10 +122,7 @@ fs.writeFileSync(other, '# Посторонний\n\nТекст.\n');
   // undecided cards of THIS graph: another graph must not take the sitting over
   const left = await page.$$eval('.card-reversion', (els) => els.length);
   check(left > 0, 'undecided cards remain in the sitting (' + left + ')');
-  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(300);
-  await page.click('.burger'); await sleep(350);
-  await page.evaluate(() => [...document.querySelectorAll('.drawer nav a')].find((a) => /Новый граф/.test(a.textContent)).click());
-  await sleep(500);
+  await G.newGraph(page, BASE);
   await page.goto(BASE + '#/chat', { waitUntil: 'networkidle0' }); await sleep(400);
   check(await page.$('.card-foreign') !== null, 'in another graph the cards are flagged as foreign');
   await upload(other);

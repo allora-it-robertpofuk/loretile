@@ -340,6 +340,12 @@
     (when (and p (not (profile/problems p)))
       (stamp nil {:ev/type :ontology-synced :graph oid :version (:ev/id (peek evs)) :profile p}))))
 
+(defn whole-ontology?
+  "Can a data graph take the ontology graph `oid` as it stands (a type, the
+   one ordering relation, the whole-profile rules)?"
+  [oid]
+  (some? (copy-event oid)))
+
 (defn bind!
   "Give graph `gid` the ontology graph `oid`: its copy goes into gid's log
    and the registry remembers the binding, so changes flow. nil on success,
@@ -393,44 +399,76 @@
         (persist-registry!)
         (bind! id oid)))))
 
-(defn export-edn!
-  "Download the log as log.edn — the author drops it into kg/{ns}/ in git."
-  []
-  (let [blob (js/Blob. #js [(with-out-str
-                              (doseq [e @events] (prn e)))]
-                       #js {:type "application/edn"})
-        a (js/document.createElement "a")]
-    (set! (.-href a) (js/URL.createObjectURL blob))
-    (set! (.-download a) "log.edn")
+(defn- download! [text type fname]
+  (let [a (js/document.createElement "a")]
+    (set! (.-href a) (js/URL.createObjectURL (js/Blob. #js [text] #js {:type type})))
+    (set! (.-download a) fname)
     (.click a)))
+
+(defn- kg-of [id] (if (= id @current) (kg) (fold/kg (graph-events id))))
+
+(defn export-edn!
+  "Download a graph's log as log.edn (the open one by default) — the author
+   drops it into kg/{ns}/ in git."
+  ([] (export-edn! @current))
+  ([id] (download! (with-out-str (doseq [e (graph-events id)] (prn e))) "application/edn" "log.edn")))
 
 (defn export-md!
-  "Download the graph as ONE markdown file for a coding agent
+  "Download a graph as ONE markdown file for a coding agent
    (wiki/Profiles.md): typed relations in both directions, sources, stale
    flags. Dropped into a repo's docs/ and pointed at from CLAUDE.md."
-  []
-  (let [g (first (filter #(= @current (:id %)) @graphs))
-        blob (js/Blob. #js [(export/markdown (kg) (or (:title g) @current))]
-                       #js {:type "text/markdown"})
-        a (js/document.createElement "a")]
-    (set! (.-href a) (js/URL.createObjectURL blob))
-    (set! (.-download a) "graph.md")
-    (.click a)))
+  ([] (export-md! @current))
+  ([id] (download! (export/markdown (kg-of id) (graph-title id)) "text/markdown" "graph.md")))
 
 (defn export-ttl!
-  "Download the graph as RDF (Turtle) for an organisation's own graph tools
+  "Download a graph as RDF (Turtle) for an organisation's own graph tools
    (loretile.rdf). The graph's IRI is a URN of its id: nothing pretends to
    be hosted anywhere."
-  []
-  (let [g (first (filter #(= @current (:id %)) @graphs))
-        ttl (rdf/turtle (kg) {:title (or (:title g) @current)
-                              :base (str "urn:loretile:" (js/encodeURIComponent @current) "/")
-                              :lang (locale-for-new)})
-        blob (js/Blob. #js [ttl] #js {:type "text/turtle"})
-        a (js/document.createElement "a")]
-    (set! (.-href a) (js/URL.createObjectURL blob))
-    (set! (.-download a) "graph.ttl")
-    (.click a)))
+  ([] (export-ttl! @current))
+  ([id] (let [k (kg-of id)]
+          (download! (rdf/turtle k {:title (graph-title id)
+                                    :base (str "urn:loretile:" (js/encodeURIComponent id) "/")
+                                    :lang (or (fold/content-locale k) (name @i18n/locale))})
+                     "text/turtle" "graph.ttl"))))
+
+;; --- managing graphs (the Graphs and Ontologies views) -----------------------
+
+(defn ontology-users
+  "The graphs on this device bound to the ontology graph `oid`."
+  [oid]
+  (filter #(= oid (:ontology %)) @graphs))
+
+(defn import-as-new-graph!
+  "A log file becomes a graph of its own (the Graphs view; importing used to
+   REPLACE the open graph). An ontology graph's log comes in as an ontology
+   graph. The file is checked BEFORE a graph is made: a refused log leaves
+   the open graph open and nothing behind. Its id, or nil."
+  [title text]
+  (if-let [err (:error (read-log text))]
+    (do (reset! last-error err) nil)
+    (when-let [id (new-graph! title)]
+      (when (import-edn! text)
+        (when (:ontology-graph? (kg))
+          (reset! graphs (mapv #(cond-> % (= id (:id %)) (assoc :ontology? true)) @graphs))
+          (persist-registry!))
+        id))))
+
+(defn delete-graph!
+  "Remove a graph from this device: its log and its registry row. Refused
+   for an ontology graph a graph here still uses (Denis 2026-11-19 — its
+   delete is absent then). The open graph is left first — for another data
+   graph, else a fresh empty one — and a failed switch aborts. true when gone."
+  [id]
+  (cond
+    (seq (ontology-users id)) (do (reset! last-error {:error :ontology-in-use :detail id}) false)
+    (and (= id @current)
+         (not (if-let [other (first (remove #(or (= id (:id %)) (:ontology? %)) @graphs))]
+                (switch-graph! (:id other))
+                (new-graph! (i18n/t :ui/graph-first)))))
+    false
+    :else
+    (do (swap! sync-refused dissoc id)
+        (boolean (forget-graph! id)))))
 
 (defn load-demo!
   "Fetch a shipped demo graph in the UI's language (kg/demo/{slug}.{loc}.edn,

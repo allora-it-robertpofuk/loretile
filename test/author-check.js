@@ -74,9 +74,8 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check((await evs()).filter((x) => x.includes(':ev/type :author-named')).length === 2, 'a new name is written once more, under the same id');
 
   // the agent export says it
-  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(300);
-  await page.click('.burger'); await sleep(350);
-  await page.evaluate(() => document.querySelector('.drawer .export-agent').click()); await sleep(300);
+  await page.goto(BASE + '#/graphs', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.evaluate(() => document.querySelector('.entity-row.on .export-agent').click()); await sleep(300);
   const md = await page.evaluate(() => (window.__blob ? window.__blob.text() : ''));
   check(/## Ещё одна `[^`]+`\n- type: concept\n- added by Анна К\.; last changed by Анна К\. on \d{4}-\d\d-\d\d/.test(md), 'the agent export names the author of each topic');
 

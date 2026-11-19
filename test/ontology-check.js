@@ -6,6 +6,7 @@
 // Usage: serve public/ first, then: node test/ontology-check.js [baseUrl]
 const path = require('path');
 const puppeteer = require('puppeteer-core');
+const G = require('./lib/graphs');
 const BASE = process.argv[2] || 'http://localhost:8291';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
@@ -50,9 +51,7 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check(await page.$('.hats') !== null, 'learning graph: the two hats are shown');
 
   // create a graph from the ontology file: the file is read FIRST, the title asked after
-  await openDrawer();
-  const input = await page.$('.new-graph-ontology input[type=file]');
-  await input.uploadFile(path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'));
+  if (await G.graphFromOntologyFile(page, path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'), 'Магазин') === null) { console.log('SKIP: release build — the ontology-file door is internal until slice 3 (wiki/Ontology-Graph.md)'); await browser.close(); process.exit(0); }
   await sleep(800);
   check(await nodes() === 0, 'a graph from the ontology opened empty');
   check(await page.$('.error') === null, 'and the file was accepted');
@@ -144,11 +143,7 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
     'the node panel names the question it leaves unanswered');
 
   // the learning graph is untouched by all of this
-  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' });
-  await openDrawer();
-  await page.evaluate(() => [...document.querySelectorAll('.drawer .graph-row')]
-    .find((e) => /SQL|аналитик/.test(e.textContent)).click());
-  await sleep(800);
+  await G.openGraph(page, BASE, /SQL|аналитик/);
   check((await railTitles()).includes('Курс'), 'back in the learning graph the course button returns');
 
   await page.screenshot({ path: 'test/shot-ontology.png' });

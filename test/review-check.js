@@ -48,10 +48,9 @@ fs.writeFileSync(CRAFTED, '{:ev/id "x1" :ev/ns "g" :ev/actor "a" :ev/ts 1 :ev/ty
   const log0 = await ls('loretile-kg-log');
 
   // --- A3 -------------------------------------------------------------------
-  await page.click('.burger'); await sleep(350);
-  const input = await page.evaluateHandle(() => [...document.querySelectorAll('.drawer input[type=file]')]
-    .find((i) => i.accept === '.edn' && !i.closest('.new-graph-ontology')));
-  await input.asElement().uploadFile(CRAFTED); await sleep(800);
+  // import lives in the Graphs view and makes a graph of its own (2026-11-19)
+  await page.goto(BASE + '#/graphs', { waitUntil: 'networkidle0' }); await sleep(300);
+  await (await page.$('.import-graph input[type=file]')).uploadFile(CRAFTED); await sleep(800);
   check(/не импортирован/.test(await text('div.error')), 'A3: a log whose profile takes «requires» is refused, in words');
   check((await ls('loretile-kg-log')) === log0, 'A3: and the open graph is unchanged');
   await page.evaluate(() => { const b = document.querySelector('div.error button'); if (b) b.click(); });

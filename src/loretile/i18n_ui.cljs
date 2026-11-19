@@ -39,6 +39,16 @@
    :ui/graph-first {:ru "Мой граф" :de "Mein Graph" :en "My graph"}
    :ui/new-graph {:ru "Новый граф" :de "Neuer Graph" :en "New graph"}
    ;; the ontology as its own graph (wiki/Ontology-Graph.md)
+   ;; graphs and ontologies managed in their own views (2026-11-19)
+   :ui/ontologies {:ru "Онтологии" :de "Ontologien" :en "Ontologies"}
+   :ui/ontologies-none {:ru "Онтологий пока нет. Начните новую." :de "Noch keine Ontologien. Beginnen Sie eine neue." :en "No ontologies yet. Start a new one."}
+   :ui/used-by {:ru "графов с ней: {n}" :de "Graphen damit: {n}" :en "graphs using it: {n}"}
+   :ui/open-now {:ru "открыт" :de "geöffnet" :en "open"}
+   :ui/rename {:ru "Переименовать" :de "Umbenennen" :en "Rename"}
+   :ui/rename-prompt {:ru "Новое название:" :de "Neuer Name:" :en "New name:"}
+   :ui/delete {:ru "Удалить" :de "Löschen" :en "Delete"}
+   :ui/delete-confirm {:ru "Удалить «{title}» с этого устройства? Это не отменить — сначала экспортируйте, если он нужен." :de "«{title}» von diesem Gerät löschen? Das lässt sich nicht rückgängig machen — vorher exportieren, wenn Sie ihn brauchen." :en "Delete «{title}» from this device? This cannot be undone — export it first if you need it."}
+   :ui/error-ontology-in-use {:ru "Эту онтологию используют графы на этом устройстве." :de "Diese Ontologie wird von Graphen auf diesem Gerät verwendet." :en "Graphs on this device use this ontology."}
    :ui/ontology-graph {:ru "онтология" :de "Ontologie" :en "ontology"}
    :ui/ontology-of {:ru "Онтология:" :de "Ontologie:" :en "Ontology:"}
    :ui/new-ontology {:ru "Новая онтология" :de "Neue Ontologie" :en "New ontology"}

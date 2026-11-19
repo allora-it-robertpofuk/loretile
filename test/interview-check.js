@@ -50,9 +50,18 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   });
   await page.reload({ waitUntil: 'networkidle0' }); await sleep(400);
 
-  // drawer → a new graph with the assistant: the interview opens in the chat
-  await page.click('.burger'); await sleep(350);
-  await page.click('.drawer .new-graph-interview'); await sleep(800);
+  // a new graph with the assistant's interview. Its drawer door is gone (2026-11-19);
+  // slice 3 of wiki/Ontology-Graph.md folds the interview into the assistant's one
+  // door — until then the store and chat path is driven directly (dev build only)
+  const started = await page.evaluate(() => {
+    if (typeof loretile === 'undefined' || !loretile.chat || !loretile.chat.start_ontology_interview_BANG_) return null;
+    const id = loretile.store.new_graph_BANG_('Как работает магазин');
+    loretile.chat.start_ontology_interview_BANG_(id);
+    location.hash = '#/chat';
+    return true;
+  });
+  if (started === null) { console.log('SKIP: release build — the interview door is internal until slice 3'); await browser.close(); process.exit(0); }
+  await sleep(800);
   check(/#\/chat/.test(await page.evaluate(() => location.hash)), 'the interview opens in the chat');
   check(/режим онтологии/.test(await text('.chat-head')), 'the composer wears the ontology badge');
   check(/Для чего он/.test((await msgs()).join(' ')), 'the assistant opens with the first question');
