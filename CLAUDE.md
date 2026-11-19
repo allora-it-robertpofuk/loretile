@@ -14,7 +14,7 @@ Learning platform: knowledge graph of small learning objects, per-learner master
 | Intake chat, attachments, intake review | `wiki/Code.md#the-intake-chat-chatcljs-llmcljs` | `wiki/Authoring.md` | intake, split, steps, chat, formats, pdf, tools, locale, marks (+ ontology, interview, gaps, probe: the prompts are profile-aware) |
 | Assistant sittings | `wiki/Code.md#assistant-sittings-sessioncljs` | `wiki/Assistant-Design-2026-10-02.md` | session |
 | Demo graphs | `wiki/Code.md#demo-graphs` | `wiki/Continuous-Learning.md` | fold_test `demo-log-is-sound`; every browser check loads the SQL demo |
-| Several graphs · the Graphs and Ontologies views (open, rename, export, delete; the drawer only navigates) | `wiki/Code.md#several-graphs` | `wiki/Continuous-Learning.md` §9 | graphs, catalog, ontology-graph |
+| Several graphs · ONE Graphs view (open, rename, export, delete; one «new graph» form with an ontology choice; the drawer only navigates) | `wiki/Code.md#several-graphs` | `wiki/Continuous-Learning.md` §9 | graphs, catalog, ontology-graph |
 | Publish and pin | `wiki/Code.md#publish-and-pin` | `wiki/Data-Model.md` | course, integrity, fold_test |
 | Two hats, catalog | `wiki/Code.md#two-hats` | `wiki/Continuous-Learning.md` | catalog, guide |
 | Learner loop | `wiki/Code.md#the-learner-loop-learncljs` | `wiki/MVP.md` M1–M4 | learn, integrity, catalog, exercise, marks, links |
@@ -22,7 +22,7 @@ Learning platform: knowledge graph of small learning objects, per-learner master
 | Exercises, sandboxing, bench | `wiki/Code.md#exercises-exercisecljs` | `wiki/Exercises.md` · `wiki/Security-Review-2026-10-03.md` | exercise, bench, learn |
 | Ontology profiles | `wiki/Code.md#ontology-profiles` | `wiki/Profiles.md` | ontology, fold_test |
 | Ontology import from Turtle (Protégé, TopBraid, VocBench → a profile) | `wiki/Code.md#ontology-import-turtle` | `wiki/Profiles.md` § Ontology import | import, fold_test |
-| The ontology as its own graph: ontology graphs (types = nodes, relations = edges), data graphs bound by a copy, never-break sync, migration at load | `wiki/Code.md#the-ontology-as-its-own-graph` | `wiki/Ontology-Graph.md` | ontology-graph, fold_test `an-ontology-is-its-own-graph` (+ ontology, interview, probe, graphs) |
+| The property-graph core (`change` event with ops) · the ontology as an ordinary graph (types = nodes, relations = edges, vocabulary read out of it), node properties and relation words in the popup, data graphs bound by a copy, never-break sync, migration at load | `wiki/Code.md#the-ontology-as-its-own-graph` | `wiki/Ontology-Graph.md` | ontology-graph, fold_test `an-ontology-is-an-ordinary-graph` (+ ontology, interview, probe, graphs) |
 | What a model reads: descriptions, owner, inferred links, RDF export | `wiki/Code.md#what-a-model-reads` | `wiki/Profiles.md` § What a model reads | meaning, gaps, fold_test |
 | Authors: who added and changed what (`:ev/actor`, `author-named`, Settings name) | `wiki/Code.md#authors` | `wiki/Profiles.md` § What a model reads | author, fold_test |
 | Competency questions · interview · gaps card · probe | `wiki/Code.md#competency-questions` | `wiki/Profiles.md` § Competency questions | ontology, interview, gaps, probe |

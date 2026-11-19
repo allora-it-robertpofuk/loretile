@@ -1,13 +1,13 @@
 // Shared steps for browser checks since the drawer only navigates (Denis
 // 2026-11-19): graphs and ontologies are opened, made, exported and deleted
-// in their own views, #/graphs and #/ontologies.
+// in the Graphs view, #/graphs — one set of graphs, each with an ontology.
 const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// open the list view and click the row whose title matches `re`
-async function openGraph(page, base, re, view = 'graphs') {
-  await page.goto(base + '#/' + view, { waitUntil: 'networkidle0' });
+// open the Graphs view and click the row whose title matches `re`
+async function openGraph(page, base, re) {
+  await page.goto(base + '#/graphs', { waitUntil: 'networkidle0' });
   await sleep(250);
   const ok = await page.evaluate((src) => {
     const a = [...document.querySelectorAll('.entity-row .entity-title')].find((e) => new RegExp(src).test(e.textContent));
@@ -18,18 +18,23 @@ async function openGraph(page, base, re, view = 'graphs') {
   return ok;
 }
 
-// titles of the rows in a list view; the open one is marked with «*»
-async function listRows(page, base, view = 'graphs') {
-  await page.goto(base + '#/' + view, { waitUntil: 'networkidle0' });
+// titles of the rows in the Graphs view; the open one is marked with «*»
+async function listRows(page, base) {
+  await page.goto(base + '#/graphs', { waitUntil: 'networkidle0' });
   await sleep(250);
   return page.$$eval('.entity-row', (es) => es.map((e) => (e.classList.contains('on') ? '*' : '') + e.querySelector('.entity-title').textContent));
 }
 
-// «Новый граф» in the Graphs view; the check's dialog handler answers the title
-async function newGraph(page, base) {
+// «Новый граф» in the Graphs view: the form takes a title and an ontology —
+// "learning" (default), "ontology" (the graph describes types) or a graph id
+async function newGraph(page, base, title, ontology = 'learning') {
   await page.goto(base + '#/graphs', { waitUntil: 'networkidle0' });
   await sleep(250);
   await page.click('.graphs-page .new-graph');
+  await page.waitForSelector('.new-graph-form');
+  await page.type('.new-graph-title', title);
+  await page.select('.new-graph-ontology', ontology);
+  await page.click('.new-graph-create');
   await sleep(700);
 }
 

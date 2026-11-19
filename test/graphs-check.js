@@ -51,7 +51,7 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check(await page.$('.load-demo') !== null, 'and it offers the empty-map start again');
 
   // a graph of your own: create, author in it, and it stays separate
-  await G.newGraph(page, BASE);
+  await G.newGraph(page, BASE, 'Мой учебник');
   const rows3 = await G.listRows(page, BASE);
   check(rows3.length === 3, 'a new graph was created');
   check(rows3.some((r) => /^\*Мой учебник/.test(r)), 'and it is the one now open');

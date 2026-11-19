@@ -122,7 +122,7 @@ fs.writeFileSync(other, '# Посторонний\n\nТекст.\n');
   // undecided cards of THIS graph: another graph must not take the sitting over
   const left = await page.$$eval('.card-reversion', (els) => els.length);
   check(left > 0, 'undecided cards remain in the sitting (' + left + ')');
-  await G.newGraph(page, BASE);
+  await G.newGraph(page, BASE, 'Чужой граф');
   await page.goto(BASE + '#/chat', { waitUntil: 'networkidle0' }); await sleep(400);
   check(await page.$('.card-foreign') !== null, 'in another graph the cards are flagged as foreign');
   await upload(other);

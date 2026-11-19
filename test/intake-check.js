@@ -144,7 +144,7 @@ fs.writeFileSync(FIXTURE, Array.from({ length: 12 }, (_, i) =>
   check(/связь/.test(txt) && !/ждут/.test(txt), 'links appear once their topics exist');
 
   // another graph: the cards stay, but cannot be accepted there
-  await G.newGraph(page, BASE);
+  await G.newGraph(page, BASE, 'Второй граф');
   await page.goto(BASE + '#/chat', { waitUntil: 'networkidle0' });
   await sleep(300);
   check(await page.$('.card-foreign') !== null, 'cards from another graph are flagged');

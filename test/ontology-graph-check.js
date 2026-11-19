@@ -1,4 +1,4 @@
-// The ontology as its own graph (wiki/Ontology-Graph.md, slice 1): a graph
+// The ontology as an ordinary graph (wiki/Ontology-Graph.md, wiki/Property-Graph.md): a graph
 // that carried its own ontology is moved over at load — an ontology graph is
 // made from it and the data graph is bound by a copy; the ontology graph's
 // map draws types as nodes and relations as edges (a loop for type → same
@@ -49,60 +49,182 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   await page.reload({ waitUntil: 'networkidle0' });
   await sleep(500);
   const reg = await registry();
-  check(/:ontology\? true/.test(reg), 'at load an ontology graph was made from it');
+  const log = () => page.evaluate(() => localStorage.getItem('loretile-kg-log'));
+  check(/:ontology "ontology"/.test(reg), 'at load an ontology graph was made from it (a graph on the types ontology)');
   check(/:ontology "o-/.test(reg), 'and the data graph is bound to it in the registry');
-  check(/:ontology-synced/.test(await page.evaluate(() => localStorage.getItem('loretile-kg-log'))),
-    'the data graph carries a copy of its ontology');
+  check(/:ontology-copy/.test(await log()), 'the data graph carries a copy of its ontology, as a graph property');
   await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' });
   await sleep(300);
   check(await page.$('.bound-note a') !== null, 'its ontology page names the ontology graph');
   check(await page.$('.node-type-form') === null && await page.$('.relation-form') === null,
     'and offers no vocabulary forms there: they live in the ontology graph');
 
-  // the ontology graph: types are nodes, relations edges
+  // the ontology graph is an ordinary graph: types are nodes, relations edges
   await page.click('.bound-note a');
   await sleep(900);
   check(/#\/ontology$/.test(await page.evaluate(() => location.hash)), 'the link opened the ontology graph on its ontology page');
   check(await page.$('.ontology-users li') !== null, 'which lists the graph that uses it');
-  check(await page.$('.node-type-form') !== null, 'and can grow');
+  check(await page.$('.edit-on-map') !== null && await page.$('.node-type-form') === null, 'and sends editing to its map');
+  check(/:ev\/type :change/.test(await log()) && !/ontology-graph-started|ontology-synced/.test(await log()),
+    'its log holds ordinary change events, no special ones');
   await page.goto(BASE + '#/', { waitUntil: 'networkidle0' });
   await sleep(1500);
   const typeCount = await nodes();
-  check(typeCount >= 6, `the ontology graph's map draws its node types (${typeCount})`);
+  check(typeCount >= 6, `the ontology graph's map shows its node types (${typeCount})`);
   check(await page.$$eval('.edge', (es) => es.length).then((n) => n >= 8), 'and its relations as edges');
   check(await page.$('.edge-loop') !== null, 'a relation from a type to itself draws a loop');
   const rail = await page.evaluate(() => [...document.querySelectorAll('.rail .rbtn')].map((b) => b.title));
-  check(!rail.includes('Тема') && !rail.includes('Связь'), 'no add or link on its rail yet (slice 2)');
+  check(rail.includes('Тема') && rail.includes('Связь'), 'its rail adds and links like any graph');
 
-  // a change in the ontology graph flows into the bound graph
-  await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' });
+  // add a type on its map, then draw a relation and name it as it is drawn
+  const addNode = async (title, type) => {
+    await page.evaluate(() => [...document.querySelectorAll('.rail .rbtn')].find((e) => /Тема/.test(e.title)).click());
+    await page.waitForSelector('.modal input');
+    if (type) await page.select('.modal select.node-type', type);
+    await page.type('.modal input', title);
+    await page.type('.modal textarea', title + ' — определение.');
+    await page.click('.modal button.primary');
+    await sleep(500);
+  };
+  const tapNode = async (title) => {
+    const i = await page.evaluate((t) => [...document.querySelectorAll('.node')].findIndex((n) => n.textContent.includes(t)), title);
+    const ns = await page.$$('.node');
+    await ns[i].click(); await sleep(150);
+  };
+  const idOf = async (title) => ((await log()).match(new RegExp(':id "([^"]+)",? :title "' + title + '"')) || [])[1];
+  await addNode('Поставщик');
+  await sleep(800);
+  check(await page.$('.error') === null && await nodes() === typeCount + 1, 'a type is added on the ontology map');
+  const procTitle = await page.evaluate(() => [...document.querySelectorAll('.node')].map((n) => n.textContent).find((t) => /процесс/i.test(t)) || '');
+  await page.evaluate(() => [...document.querySelectorAll('.rail .rbtn')].find((e) => /Связь/.test(e.title)).click());
+  await tapNode('Поставщик'); await tapNode(procTitle.trim().slice(0, 7));
+  check(await page.$('.modal .new-relation') !== null, 'drawing between two types offers a new relation');
+  await page.type('.new-relation-label', 'поставляет для');
+  await page.type('.new-relation-inverse', 'получает от');
+  await page.click('.new-relation-add'); await sleep(600);
+  check(/:edge-set "[^"]+" :поставляет-для/.test(await log()) && /:label "поставляет для"/.test(await log()), 'the relation is an edge whose words are its properties');
+
+  // properties of a type, in its popup
+  const sup = await idOf('Поставщик');
+  await page.goto(BASE + '#/c/' + encodeURIComponent(sup), { waitUntil: 'networkidle0' }); await sleep(600);
+  check(await page.$('.node-props .prop-color') !== null && await page.$('.node-props .prop-learnable') !== null,
+    'a type\'s popup edits its colour and learnable flag');
+  // a colour chosen: the picker commits with the browser's change event
+  await page.evaluate(() => {
+    const i = document.querySelector('.prop-color');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, '#ff8800');
+    i.dispatchEvent(new Event('change', { bubbles: true }));
+  });
   await sleep(300);
-  await page.type('.node-type-form input:nth-of-type(1)', 'supplier');
-  await page.type('.node-type-form input:nth-of-type(2)', 'поставщик');
-  await page.click('.node-type-form .node-type-add');
-  await sleep(500);
-  check(await page.$('.error') === null, 'a new type is accepted in the ontology graph');
-  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' });
-  await sleep(1200);
-  check(await nodes() === typeCount + 1, 'and appears on its map');
+  await page.click('.prop-learnable'); await sleep(300);
+  await page.type('.prop-new-key', 'пример');
+  await page.type('.prop-new-value', 'ООО Ромашка');
+  await page.click('.prop-add-btn'); await sleep(400);
+  const l1 = await log();
+  check(/:color "#ff8800"/.test(l1) && /:learnable\? true/.test(l1) && /:пример "ООО Ромашка"/.test(l1),
+    'colour, flag and a free property are node-set ops in the log');
+  check(await page.$eval('.prop-row .prop-value', (e) => e.value).catch(() => '') === 'ООО Ромашка', 'the free property shows as a row');
+  await page.click('.node-props .icon-current'); await sleep(200);
+  await page.click('.icon-picker .icon-pick[title="person"]'); await sleep(400);
+  check(/:node-set "[^"]+" \{:icon "person"\}/.test(await log()), 'an icon is chosen for the type from the app\'s set');
+  check(await page.$('.node.selected g path, .node g path') !== null, 'and draws in the node');
+
+  // a relation's words and flags, edited from a type's popup — every edge of it at once
+  check(await page.$('.relation-props .relation-row') !== null, 'the type\'s popup lists its relations');
+  await page.evaluate(() => {
+    const r = [...document.querySelectorAll('.relation-row')].find((x) => /поставляет-для/.test(x.textContent));
+    const i = r.querySelector('.rel-label'); i.focus(); i.select();
+  });
+  await page.keyboard.type('снабжает'); await page.keyboard.press('Enter'); await sleep(400);
+  check(/:поставляет-для "[^"]+" \{:label "снабжает"\}/.test(await log()), 'renaming a relation writes its edges');
+  await page.evaluate(() => [...document.querySelectorAll('.relation-row')].find((x) => /поставляет-для/.test(x.textContent)).querySelector('.rel-ordering').click());
+  await sleep(400);
+  check(/порядк|ordering|bad-profile|Онтология/i.test(await page.$eval('.error', (e) => e.textContent).catch(() => '')),
+    'a second ordering relation is refused, in words');
+  await page.evaluate(() => { const b = document.querySelector('div.error button'); if (b) b.click(); });
+  // a relation can go entirely (the dialog is accepted): every edge of it in one change
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(600);
+  await page.evaluate(() => [...document.querySelectorAll('.rail .rbtn')].find((e) => /Связь/.test(e.title)).click());
+  await tapNode('Поставщик'); await tapNode(procTitle.trim().slice(0, 7));
+  await page.type('.new-relation-label', 'временная'); await page.click('.new-relation-add'); await sleep(500);
+  await page.goto(BASE + '#/c/' + encodeURIComponent(sup), { waitUntil: 'networkidle0' }); await sleep(500);
+  await page.evaluate(() => [...document.querySelectorAll('.relation-row')].find((x) => /временная/.test(x.textContent)).querySelector('.rel-delete').click());
+  await sleep(400);
+  check(/:edge-remove "[^"]+" :временная/.test(await log()) && !(await page.$$eval('.relation-row', (rs) => rs.some((r) => /временная/.test(r.textContent)))),
+    'a whole relation is deleted from the type\'s popup');
+
+  // the bound graph took the new copy
   await G.openGraph(page, BASE, /^Магазин$/);
   await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' });
   await sleep(300);
-  check(/поставщик/.test(await page.$eval('.ontology-page', (e) => e.textContent)), 'the bound graph took the new copy');
+  const tables = await page.$eval('.ontology-page', (e) => e.textContent);
+  check(/Поставщик/.test(tables) && /снабжает/.test(tables), 'the bound graph took the new copy: the type and the renamed relation');
+  check(/:ontology-copy \{[^}]*:icon "person"/.test(await log()) || /:icon "person"/.test((await log()).split(':ontology-copy').pop()),
+    'the type\'s icon travels in the copy to the graph using it');
+  check(await page.$('.type-styles .type-style-row') !== null, 'the graph\'s own page restyles its types (graph meta)');
+  await page.evaluate(() => {
+    const r = [...document.querySelectorAll('.type-style-row')].find((x) => /Поставщик/.test(x.textContent));
+    const i = r.querySelector('.prop-color');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, '#112233');
+    i.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await sleep(400);
+  check(/:type-style \{:[^ ]*поставщик \{:color "#112233"\}\}/.test(await log()), 'a type\'s colour set in the graph\'s meta, over the ontology\'s');
 
-  // a fresh ontology must be whole before a graph can use it
-  answer = 'Склад';
-  await page.goto(BASE + '#/ontologies', { waitUntil: 'networkidle0' }); await sleep(300);
-  await page.click('.ontologies-page .new-ontology');
-  await sleep(700);
-  check(/#\/ontology$/.test(await page.evaluate(() => location.hash)), 'a new ontology opens on its page');
-  check(await nodes() === 0, 'and empty');
-  answer = 'Склад: данные';
+  // properties of a data node, in its popup — they survive a reload
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(500);
+  await addNode('Оплата счёта', 'process');
+  const pay = await idOf('Оплата счёта');
+  await page.goto(BASE + '#/c/' + encodeURIComponent(pay), { waitUntil: 'networkidle0' }); await sleep(600);
+  check(await page.$('.node-props .prop-color') !== null && await page.$('.node-props .prop-learnable') === null,
+    'a data node has its own colour and icon, but no type flag');
+  await page.type('.prop-new-key', 'владелец');
+  await page.type('.prop-new-value', 'финансы');
+  await page.click('.prop-add-btn'); await sleep(400);
+  await page.reload({ waitUntil: 'networkidle0' }); await sleep(800);
+  check(await page.$eval('.prop-row .prop-value', (e) => e.value).catch(() => '') === 'финансы', 'a data node\'s property is set and survives a reload');
+  await page.focus('.prop-row .prop-value');
+  await page.evaluate(() => document.querySelector('.prop-row .prop-value').select());
+  await page.keyboard.type('бухгалтерия'); await page.keyboard.press('Enter'); await sleep(400);
+  check(/:владелец "бухгалтерия"/.test(await log()), 'editing the value writes it');
+  await page.focus('.prop-row .prop-key');
+  await page.evaluate(() => document.querySelector('.prop-row .prop-key').select());
+  await page.keyboard.type('ответственный'); await page.keyboard.press('Enter'); await sleep(400);
+  check(/:ответственный "бухгалтерия"/.test(await log()) && await page.$eval('.prop-row .prop-key', (e) => e.value).catch(() => '') === 'ответственный',
+    'renaming a key moves the value under the new name');
+  await page.click('.prop-row .prop-x'); await sleep(400);
+  check(await page.$('.prop-row') === null && /:ответственный nil/.test(await log()), 'and × removes it');
+
+  // the one form makes any graph: a title and its ontology (Denis 2026-11-19: no kind of graph is special)
+  const formCreate = async (title, ontology) => {
+    await page.waitForSelector('.new-graph-form');
+    if (ontology) await page.select('.new-graph-ontology', ontology);
+    await page.type('.new-graph-title', title);
+    await page.click('.new-graph-create'); await sleep(800);
+  };
+  await page.goto(BASE + '#/graphs', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.click('.graphs-page .new-graph');
+  await page.waitForSelector('.new-graph-form');
+  const opts = await page.$$eval('.new-graph-ontology option', (os) => os.map((o) => o.value + '=' + o.textContent));
+  check(opts.some((o) => /^learning=Обучение/.test(o)) && opts.some((o) => /^ontology=Типы и связи/.test(o)) && opts.some((o) => /^o-/.test(o)),
+    `the form offers the two built-in ontologies and the graphs that describe types (${opts.length})`);
+  // a fresh ontology needs a type before a graph can use it
+  await formCreate('Склад', 'ontology');
+  check(/#\/ontology$/.test(await page.evaluate(() => location.hash)), 'a graph on the types ontology opens on its page');
+  check(/Склад", :ontology "ontology"/.test(await registry()), 'its ontology is the built-in types one — a property, not a kind');
+  check(await nodes() === 0, 'and it is empty');
   await page.click('.new-graph-from-ontology');
-  await sleep(700);
-  check(/не готова/.test(await page.$eval('.error', (e) => e.textContent).catch(() => '')),
-    'an empty ontology cannot be used yet, and says why');
-  check(!/Склад: данные/.test(await registry()), 'and no graph is left behind for it');
+  await sleep(500);
+  check(/не готова/.test(await page.$eval('.error', (e) => e.textContent).catch(() => '')) && await page.$('.new-graph-form') === null,
+    'an empty ontology cannot be used yet, says why, and opens no form');
+  await page.evaluate(() => { const b = document.querySelector('div.error button'); if (b) b.click(); });
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(400);
+  await addNode('Товар');
+  await page.goto(BASE + '#/ontology', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.click('.new-graph-from-ontology');
+  check(await page.$eval('.new-graph-ontology', (e) => e.value).catch(() => '') !== 'learning', 'with a type, the form opens with this ontology chosen');
+  await formCreate('Склад: данные');
+  check(/Склад: данные", :ontology "o-/.test(await registry()), 'and the new graph takes it');
 
   // the deep link reaches a graph's ontology page
   const oid = (reg.match(/:id "(o-[^"]+)"/) || [])[1];
@@ -111,50 +233,57 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check(await page.evaluate(() => location.hash) === '#/ontology' && await page.$('.ontology-users') !== null,
     'the deep link #/g/{ontology}/ontology opened that ontology graph\'s page');
 
-  // the Graphs and Ontologies views manage them (2026-11-19): the drawer only navigates
-  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(300);
+  // the colour scheme is a graph property
+  check(await page.$eval('.color-scheme', (e) => e.value).catch(() => '') === 'blueprint', 'a graph on the types ontology draws in the blueprint scheme by default');
+  await page.select('.color-scheme', 'warm'); await sleep(300);
+  check(/:color-scheme "warm"/.test(await log()), 'choosing a scheme writes a graph property');
+  await page.goto(BASE + '#/', { waitUntil: 'networkidle0' }); await sleep(400);
+  check(await page.$('.map-wrap.scheme-warm') !== null, 'and the map draws in it');
+
+  // ONE list of graphs (2026-11-19): the drawer only navigates
   await page.click('.burger'); await sleep(350);
   const drawerText = await page.$eval('.drawer nav', (e) => e.textContent);
-  check(await page.$('.drawer .nav-graphs') !== null && await page.$('.drawer .nav-ontologies') !== null,
-    'the drawer links to the Graphs and Ontologies views');
+  check(await page.$('.drawer .nav-graphs') !== null && await page.$('.drawer .nav-ontologies') === null,
+    'the drawer links to the one Graphs view');
   check(!/Новый граф|Экспорт|Импорт|Демо-графы/.test(drawerText) && await page.$('.drawer .graph-row') === null,
     'and no longer lists graphs, makes them, imports or exports');
   await page.keyboard.press('Escape'); await sleep(200);
-  const dataRows = await G.listRows(page, BASE);
-  check(dataRows.some((r) => /^\*?Магазин$/.test(r)) && !dataRows.some((r) => /Онтология:|Склад/.test(r)),
-    `the Graphs view lists data graphs only (${dataRows.join(' | ')})`);
+  const rows = await G.listRows(page, BASE);
+  check(['Магазин', 'Онтология: Магазин', 'Склад', 'Склад: данные'].every((t) => rows.some((r) => r.replace('*', '') === t)),
+    `the Graphs view lists every graph, ontologies included (${rows.join(' | ')})`);
   check(await page.$$eval('.graphs-page .entity-row', (es) => es.every((e) => e.querySelector('.export-log') && e.querySelector('.export-agent') && e.querySelector('.export-ttl'))),
-    'each graph row exports (edn, md, ttl)');
-  const ontoRows = await G.listRows(page, BASE, 'ontologies');
-  check(ontoRows.some((r) => /Онтология: Магазин/.test(r)) && ontoRows.some((r) => /Склад$/.test(r)), 'the Ontologies view lists the ontology graphs');
-  const usedRow = await page.evaluateHandle(() => [...document.querySelectorAll('.ontologies-page .entity-row')].find((e) => /Онтология: Магазин/.test(e.textContent)));
-  check(await usedRow.asElement().$('.delete') === null && /графов с ней: 1/.test(await usedRow.asElement().evaluate((e) => e.textContent)),
-    'an ontology in use says by how many graphs, and has no delete');
-  // rename
-  answer = 'Склад (переименован)';
-  await page.evaluate(() => [...document.querySelectorAll('.ontologies-page .entity-row')].find((e) => /^Склад$/.test(e.querySelector('.entity-title').textContent)).querySelector('.rename').click());
+    'each row exports (edn, md, ttl)');
+  const rowText = (t) => page.evaluate((t) => { const r = [...document.querySelectorAll('.entity-row')].find((e) => e.querySelector('.entity-title').textContent === t); return r ? r.textContent + (r.querySelector('.delete') ? ' [delete]' : '') : ''; }, t);
+  check(/Онтология: Обучение \(встроенная\)/.test(await rowText('Мой граф')), 'each row names its ontology — learning by default');
+  const used = await rowText('Онтология: Магазин');
+  check(/графов с ней: 1/.test(used) && !/\[delete\]/.test(used), 'a graph others use as their ontology says how many, and has no delete');
+  // rename and delete an unused one (the dialog is accepted)
+  await page.click('.graphs-page .new-graph'); await formCreate('Черновик', 'ontology');
+  await page.goto(BASE + '#/graphs', { waitUntil: 'networkidle0' }); await sleep(300);
+  answer = 'Черновик (переименован)';
+  await page.evaluate(() => [...document.querySelectorAll('.entity-row')].find((e) => /^Черновик$/.test(e.querySelector('.entity-title').textContent)).querySelector('.rename').click());
   await sleep(300);
-  check(/Склад \(переименован\)/.test(await registry()), 'rename changes the title');
-  // delete an unused one (the dialog is accepted)
-  await page.evaluate(() => [...document.querySelectorAll('.ontologies-page .entity-row')].find((e) => /переименован/.test(e.querySelector('.entity-title').textContent)).querySelector('.delete').click());
+  check(/Черновик \(переименован\)/.test(await registry()), 'rename changes the title');
+  const nRows = (await G.listRows(page, BASE)).length;
+  await page.evaluate(() => [...document.querySelectorAll('.entity-row')].find((e) => /переименован/.test(e.querySelector('.entity-title').textContent)).querySelector('.delete').click());
   await sleep(400);
-  check(!/переименован/.test(await registry()) && (await G.listRows(page, BASE, 'ontologies')).length === ontoRows.length - 1,
-    'an unused ontology is deleted, its row and log gone');
+  check(!/переименован/.test(await registry()) && (await G.listRows(page, BASE)).length === nRows - 1,
+    'an unused graph is deleted, its row and log gone');
 
-  // both are in the command palette too
+  // both are in the command palette too — they open the form
   const fromPalette = async (cmd, title) => {
-    answer = title;
     await page.goto(BASE + '#/', { waitUntil: 'networkidle0' });
     await sleep(400);
     await page.keyboard.down('Control'); await page.keyboard.press('k'); await page.keyboard.up('Control');
     await sleep(300);
     await page.type('.cmd-input', cmd); await sleep(250);
-    await page.keyboard.press('Enter'); await sleep(800);
+    await page.keyboard.press('Enter'); await sleep(400);
+    await formCreate(title);
   };
   const before = (await registry()).match(/:id "/g).length;
   await fromPalette('Новая онтология', 'Из палитры: онтология');
-  check(/Из палитры: онтология",? :ontology\? true/.test(await registry()) && /#\/ontology$/.test(await page.evaluate(() => location.hash)),
-    'the palette starts a new ontology and opens its page');
+  check(/Из палитры: онтология",? :ontology "ontology"/.test(await registry()) && /#\/ontology$/.test(await page.evaluate(() => location.hash)),
+    'the palette\'s «new ontology» opens the form with the types ontology chosen');
   await fromPalette('Новый граф', 'Из палитры: граф');
   const reg2 = await registry();
   check(/Из палитры: граф"/.test(reg2) && reg2.match(/:id "/g).length === before + 2 && await nodes() === 0,

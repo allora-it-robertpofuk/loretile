@@ -40,6 +40,44 @@
    :ui/new-graph {:ru "Новый граф" :de "Neuer Graph" :en "New graph"}
    ;; the ontology as its own graph (wiki/Ontology-Graph.md)
    ;; graphs and ontologies managed in their own views (2026-11-19)
+   ;; node properties and the ontology edited on its map (wiki/Property-Graph.md)
+   ;; one set of graphs, each with an ontology (2026-11-19)
+   :ui/new-type-heading {:ru "Новый тип" :de "Neuer Typ" :en "New type"}
+   :ui/type-name-placeholder {:ru "Название типа — например, «процесс»" :de "Name des Typs — z. B. «Prozess»" :en "Type name — e.g. «process»"}
+   :ui/type-def-placeholder {:ru "Что это такое — одно предложение" :de "Was das ist — ein Satz" :en "What it is — one sentence"}
+   :ui/type-word {:ru "Тип" :de "Typ" :en "Type"}
+   :ui/new-node-heading {:ru "Новый узел" :de "Neuer Knoten" :en "New node"}
+   :ui/node-name-placeholder {:ru "Название" :de "Name" :en "Name"}
+   :ui/node-def-placeholder {:ru "Описание" :de "Beschreibung" :en "Description"}
+   :ui/node-word {:ru "Узел" :de "Knoten" :en "Node"}
+   :ui/empty-onto-title {:ru "Онтология — типы и связи между ними" :de "Eine Ontologie — Typen und ihre Beziehungen" :en "An ontology — types and how they relate"}
+   :ui/empty-onto-text {:ru "Добавьте типы — «процесс», «роль», «система»; потом соедините их: связь между типами станет связью, которой пользуются графы с этой онтологией." :de "Fügen Sie Typen hinzu — «Prozess», «Rolle», «System»; verbinden Sie sie dann: eine Verbindung zwischen Typen wird eine Beziehung für die Graphen mit dieser Ontologie." :en "Add types — «process», «role», «system»; then connect them: a link between types becomes a relation the graphs using this ontology can draw."}
+   :ui/empty-graph-title {:ru "Пустой граф" :de "Ein leerer Graph" :en "An empty graph"}
+   :ui/empty-graph-text {:ru "Добавьте узел — его тип берётся из онтологии графа; или отдайте документ ассистенту — он предложит узлы и связи карточками." :de "Fügen Sie einen Knoten hinzu — sein Typ kommt aus der Ontologie des Graphen; oder geben Sie dem Assistenten ein Dokument." :en "Add a node — its type comes from the graph's ontology; or give the assistant a document and it proposes nodes and links as cards."}
+   :ui/ontology-graph-hint {:ru "Этот граф — онтология: его узлы — типы, связи между ними — связи, которыми пользуются графы с этой онтологией." :de "Dieser Graph ist eine Ontologie: seine Knoten sind Typen, seine Verbindungen die Beziehungen der Graphen, die sie verwenden." :en "This graph is an ontology: its nodes are types, its links the relations the graphs using it can draw."}
+   :ui/ontology-bound-hint {:ru "Словарь этого графа — копия его онтологии: типы узлов и связи. Изменения приходят сюда сами." :de "Das Vokabular dieses Graphen ist eine Kopie seiner Ontologie. Änderungen kommen von selbst." :en "This graph's vocabulary is a copy of its ontology: node types and relations. Changes arrive by themselves."}
+   :ui/create {:ru "Создать" :de "Erstellen" :en "Create"}
+   :ui/ontology-learning-builtin {:ru "Обучение (встроенная)" :de "Lernen (eingebaut)" :en "Learning (built in)"}
+   :ui/ontology-types-builtin {:ru "Типы и связи (встроенная)" :de "Typen und Beziehungen (eingebaut)" :en "Types and relations (built in)"}
+   :ui/ontology-types-choice {:ru "Типы и связи (встроенная) — граф станет онтологией" :de "Typen und Beziehungen (eingebaut) — der Graph wird eine Ontologie" :en "Types and relations (built in) — the graph becomes an ontology"}
+   :ui/graph-props {:ru "Граф" :de "Graph" :en "Graph"}
+   :ui/color-scheme {:ru "цветовая схема карты" :de "Farbschema der Karte" :en "map colour scheme"}
+   :ui/scheme-default {:ru "обычная" :de "Standard" :en "default"}
+   :ui/scheme-blueprint {:ru "чертёж" :de "Blaupause" :en "blueprint"}
+   :ui/scheme-warm {:ru "тёплая" :de "warm" :en "warm"}
+   :ui/properties {:ru "Свойства" :de "Eigenschaften" :en "Properties"}
+   :ui/prop-key {:ru "свойство" :de "Eigenschaft" :en "property"}
+   :ui/prop-value {:ru "значение" :de "Wert" :en "value"}
+   :ui/prop-icon {:ru "значок" :de "Symbol" :en "icon"}
+   :ui/icon-none {:ru "без значка" :de "ohne Symbol" :en "no icon"}
+   :ui/style-reset {:ru "вернуть унаследованный" :de "auf geerbt zurücksetzen" :en "back to inherited"}
+   :ui/type-styles {:ru "Вид типов в этом графе" :de "Aussehen der Typen in diesem Graphen" :en "How types look in this graph"}
+   :ui/rel-delete-confirm {:ru "Удалить связь «{label}» целиком — все её рёбра в онтологии?" :de "Die Beziehung «{label}» ganz löschen — alle ihre Kanten in der Ontologie?" :en "Delete the relation «{label}» entirely — all its edges in the ontology?"}
+   :ui/prop-color {:ru "цвет" :de "Farbe" :en "colour"}
+   :ui/ontology-type {:ru "тип" :de "Typ" :en "type"}
+   :ui/new-relation {:ru "Новая связь" :de "Neue Beziehung" :en "New relation"}
+   :ui/new-relation-placeholder {:ru "как читается, например «выполняет»" :de "wie sie sich liest, z. B. «führt aus»" :en "how it reads, e.g. «performs»"}
+   :ui/ontology-edit-on-map {:ru "Онтология правится на её карте: «+» — новый тип, связь между типами — новая связь, свойства — во всплывающем окне типа." :de "Die Ontologie wird auf ihrer Karte bearbeitet: «+» ist ein neuer Typ, eine Verbindung zwischen Typen eine neue Beziehung, Eigenschaften im Fenster des Typs." :en "The ontology is edited on its map: «+» is a new type, a link between types a new relation, properties in the type's popup."}
    :ui/ontologies {:ru "Онтологии" :de "Ontologien" :en "Ontologies"}
    :ui/ontologies-none {:ru "Онтологий пока нет. Начните новую." :de "Noch keine Ontologien. Beginnen Sie eine neue." :en "No ontologies yet. Start a new one."}
    :ui/used-by {:ru "графов с ней: {n}" :de "Graphen damit: {n}" :en "graphs using it: {n}"}
@@ -61,7 +99,7 @@
    :ui/error-ontology-graph-only {:ru "В графе онтологии живут только типы и связи." :de "Ein Ontologie-Graph enthält nur Typen und Beziehungen." :en "An ontology graph holds only types and relations."}
    :ui/error-ontology-elsewhere {:ru "Онтология этого графа правится в графе «{title}»." :de "Die Ontologie dieses Graphen wird im Graphen «{title}» bearbeitet." :en "This graph's ontology is edited in the graph «{title}»."}
    :ui/error-ontology-breaks-data {:ru "Эта версия онтологии убрала бы то, чем пользуются данные: {detail}" :de "Diese Version der Ontologie entfernte, was die Daten verwenden: {detail}" :en "This version of the ontology would remove what the data uses: {detail}"}
-   :ui/error-no-whole-ontology {:ru "Онтология ещё не готова: нужен хотя бы один тип и ровно одна связь порядка." :de "Die Ontologie ist noch nicht fertig: mindestens ein Typ und genau eine Ordnungsbeziehung nötig." :en "The ontology is not ready yet: it needs at least one type and exactly one ordering relation."}
+   :ui/error-no-whole-ontology {:ru "Онтология ещё не готова: нужен хотя бы один тип." :de "Die Ontologie ist noch nicht fertig: mindestens ein Typ nötig." :en "The ontology is not ready yet: it needs at least one type."}
    :ui/new-graph-prompt {:ru "Название нового графа — например, тема учебника, который вы загрузите"
                          :de "Name des neuen Graphen, etwa das Thema des Dokuments, das Sie hochladen"
                          :en "Name the new graph, for instance the subject of the document you will upload"}

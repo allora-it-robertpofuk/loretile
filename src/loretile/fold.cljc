@@ -82,11 +82,6 @@
 
 ;; --- the ontology as its own graph (wiki/Ontology-Graph.md) -----------------
 
-(def ^:private ontology-graph-events
-  "What an ontology graph's log may hold: its vocabulary and who wrote it."
-  #{:ontology-graph-started :node-type-added :relation-added :vocabulary-described
-    :cq-raised :cq-retired :author-named :graph-owner-set})
-
 (def ^:private vocabulary-events #{:profile-set :node-type-added :relation-added :vocabulary-described})
 
 (defn sync-breaks
@@ -106,25 +101,112 @@
   [kg p]
   (if (:ontology-graph? kg) (profile/draft-problems p) (profile/problems p)))
 
+;; --- the property-graph core (wiki/Property-Graph.md) -----------------------
+
+;; Every graph has an ontology, named by its `:ontology` graph property:
+;; absent = the built-in LEARNING one; `types-ontology` = the built-in one
+;; for describing vocabularies (a graph using it has types for nodes and
+;; relations for edges — what other graphs then use as their ontology); any
+;; other value = a graph of the set, whose vocabulary the graph carries as
+;; `:ontology-copy`. No kind of graph is special (Denis 2026-11-19).
+(def types-ontology "ontology")
+
+(def ^:private managed
+  "What the fold keeps itself and no op may set."
+  #{:id :status :version :changed-by :changed-at :added-by :stale?})
+
+(defn- merge-props [m props]
+  (reduce-kv (fn [m k v] (if (nil? v) (dissoc m k) (assoc m k v))) (or m {}) props))
+
+(defn- same-edge? [[from type to]] #(= [from type to] [(:from %) (:type %) (:to %)]))
+
+(defn- apply-op
+  "One operation of a `change` event, applied mechanically: the same for
+   every graph. Readers give the properties their meaning."
+  [kg [op a b c d] e]
+  (let [stamp #(assoc % :changed-by (:ev/actor e) :changed-at (:ev/ts e))]
+    (case op
+      :graph-set
+      (let [g (merge-props (:graph kg) a)
+            kg (assoc kg :graph g :ontology-graph? (= types-ontology (:ontology g)))]
+        (cond
+          (not (or (contains? a :ontology) (contains? a :ontology-copy))) kg
+          (:ontology-copy g) (assoc kg :profile (profile/normalize (:ontology-copy g))
+                                    :ontology {:graph (:ontology g) :version (:ontology-version g)})
+          :else (dissoc kg :profile :ontology)))
+      :node-set
+      (update-in kg [:concepts a]
+                 (fn [n] (stamp (merge-props (or n {:id a :title a :definition "" :status :accepted :version 1
+                                                    :added-by (:ev/actor e)})
+                                             (apply dissoc b managed)))))
+      :node-remove
+      (-> kg (update :concepts dissoc a)
+          (update :edges (fn [es] (set (remove #(or (= a (:from %)) (= a (:to %))) es)))))
+      :edge-set
+      (let [same? (same-edge? [a b c])
+            old (first (filter same? (:edges kg)))]
+        (update kg :edges (fn [es] (conj (set (remove same? es))
+                                          (merge-props (or old {:from a :type b :to c :provenance :authored})
+                                                       (dissoc d :from :to :type))))))
+      :edge-remove
+      (update kg :edges (fn [es] (set (remove (same-edge? [a b c]) es)))))))
+
+(defn- op-problem
+  "Why one op may not apply to the graph as it stands, or nil. Structure for
+   every graph; conformance to the ontology in a data graph only — an
+   ontology graph's edges ARE its relations (no usage checks there, Denis
+   2026-11-19)."
+  [kg [op a b c d]]
+  (let [onto? (:ontology-graph? kg)
+        p (:profile kg)
+        custom? (and p (not (profile/learning? p)))]
+    (case op
+      :graph-set
+      (let [g (merge-props (:graph kg) a)]
+        (when (and (contains? a :ontology-copy) (:ontology-copy g))
+          (let [v (profile/normalize (:ontology-copy g))]
+            (cond (profile/problems v) {:error :bad-profile :detail (profile/problems v)}
+                  (sync-breaks kg v) {:error :ontology-breaks-data :detail (sync-breaks kg v)}))))
+      :node-set
+      (let [kind (if (contains? b :kind) (:kind b) (get-in kg [:concepts a :kind]))]
+        (cond
+          (some managed (keys b)) {:error :invalid-schema :detail {:node [(str "managed: " (pr-str (filterv managed (keys b))))]}}
+          (and (not onto?) custom? (nil? (profile/node-type-of p kind))) {:error :unknown-node-type :detail kind}))
+      :node-remove
+      (cond (not (contains? (:concepts kg) a)) {:error :missing :detail a}
+            (some (fn [crs] (some #(= a (first %)) (:targets crs))) (vals (:courses kg))) {:error :in-course :detail a})
+      :edge-set
+      (let [new? (not-any? (same-edge? [a b c]) (:edges kg))
+            bad (when (and new? (not onto?)) (bad-edge-for-profile kg {:from a :to c :type b}))]
+        (cond
+          (not (and (contains? (:concepts kg) a) (contains? (:concepts kg) c))) {:error :missing-endpoint :detail [a c b]}
+          bad bad
+          (and new? (not onto?) (profile/acyclic? p b) (cycle? kg b a c)) {:error :requires-cycle :detail [a c b]}))
+      :edge-remove
+      (when (not-any? (same-edge? [a b c]) (:edges kg)) {:error :missing :detail [a c b]}))))
+
+(declare vocabulary)
+
+(defn- change-problem
+  "The first op that may not apply, or — in an ontology graph — a vocabulary
+   the result would leave unsound (a reserved id, a second ordering
+   relation): the copy into the graphs that use it could never be taken."
+  [kg ops]
+  (loop [k kg [o & more] ops]
+    (if o
+      (or (op-problem k o) (recur (apply-op k o {}) more))
+      (when (:ontology-graph? k)
+        (when-let [why (profile/draft-problems (vocabulary k))]
+          {:error :bad-profile :detail why})))))
+
 (defn guard
   "nil when event may be appended, else {:error ...}."
   [kg e]
   (cond
     (not (schema/valid? e)) {:error :invalid-schema :detail (schema/explain e)}
-    ;; an ontology graph starts empty, once, and then holds vocabulary only —
-    ;; its map is drawn from that vocabulary, nothing else is written there
-    (and (= :ontology-graph-started (:ev/type e))
-         (or (some? (:profile kg)) (seq (:concepts kg)) (seq (:edges kg)) (seq (:proposals kg))))
-    {:error :profile-locked}
-    (and (= :ontology-graph-started (:ev/type e)) (profile/draft-problems (profile/normalize (:profile e))))
-    {:error :bad-profile :detail (profile/draft-problems (profile/normalize (:profile e)))}
-    (and (:ontology-graph? kg) (not (ontology-graph-events (:ev/type e))))
-    {:error :ontology-graph-only :detail (:ev/type e)}
-    ;; a data graph's copy of its ontology: whole, and never breaking data
-    (and (= :ontology-synced (:ev/type e)) (profile/problems (profile/normalize (:profile e))))
-    {:error :bad-profile :detail (profile/problems (profile/normalize (:profile e)))}
-    (and (= :ontology-synced (:ev/type e)) (sync-breaks kg (profile/normalize (:profile e))))
-    {:error :ontology-breaks-data :detail (sync-breaks kg (profile/normalize (:profile e)))}
+    ;; the property-graph core: every op checked in order on the graph as it
+    ;; would stand, the whole event refused at the first problem
+    (= :change (:ev/type e)) (change-problem kg (:ops e))
     ;; a bound graph's vocabulary is edited in its ontology graph, never here:
     ;; a local addition would be lost — or block — at the next copy
     (and (:ontology kg) (vocabulary-events (:ev/type e)))
@@ -182,6 +264,7 @@
          (not (profile/node-type-of (:profile kg) (get-in e [:concept :kind]))))
     {:error :unknown-node-type :detail (get-in e [:concept :kind])}
     (and (#{:edge-accepted :edge-proposed} (:ev/type e))
+         (not (:ontology-graph? kg))
          (bad-edge-for-profile kg (:edge e)))
     (bad-edge-for-profile kg (:edge e))
     ;; no dangling edges: accepted edges join accepted concepts (grounded-in
@@ -203,6 +286,7 @@
     {:error :exists :detail (get-in e [:concept :id])}
     ;; every acyclic relation of the profile stays a DAG (`requires` in learning)
     (and (= :edge-accepted (:ev/type e))
+         (not (:ontology-graph? kg))
          (profile/acyclic? (:profile kg) (get-in e [:edge :type]))
          (cycle? kg (get-in e [:edge :type]) (get-in e [:edge :from]) (get-in e [:edge :to])))
     {:error :requires-cycle :detail (edge-key (:edge e))}
@@ -290,11 +374,8 @@
 (defmethod apply-event :profile-set [kg {:keys [profile]}]
   (assoc kg :profile (profile/normalize profile)))
 
-(defmethod apply-event :ontology-graph-started [kg {:keys [profile]}]
-  (assoc kg :ontology-graph? true :profile (profile/normalize profile)))
-
-(defmethod apply-event :ontology-synced [kg {:keys [graph version profile]}]
-  (assoc kg :profile (profile/normalize profile) :ontology {:graph graph :version version}))
+(defmethod apply-event :change [kg {:keys [ops] :as e}]
+  (reduce #(apply-op %1 %2 e) kg ops))
 
 (defmethod apply-event :relation-added [kg {:keys [relation]}]
   (update-in kg [:profile :relations] conj (dissoc relation :reserved?)))
@@ -438,27 +519,10 @@
 
 (defmethod apply-event :default [kg _] kg)
 
-(defn- drawn
-  "An ontology graph's map, drawn from its vocabulary: each node type a node
-   (id = the type's name, kind = the type), each relation one edge per
-   from → to pair it allows. A relation open at an end (empty from/to = any
-   type) draws no edge; it shows on the ontology page."
-  [kg]
-  (let [p (:profile kg)]
-    (assoc kg
-           :concepts (into {} (for [t (:node-types p)
-                                    :let [id (name (:id t))]]
-                                [id {:id id :title (:label t) :definition (or (:description t) "")
-                                     :kind (:id t) :status :accepted :version 1}]))
-           :edges (set (for [r (:relations p) :when (not (:reserved? r))
-                             f (:from r) t (:to r)]
-                         {:from (name f) :to (name t) :type (:id r)})))))
-
 (defn kg
   "The graph IS this fold."
   [events]
-  (let [k (reduce apply-event empty-kg events)]
-    (cond-> k (:ontology-graph? k) drawn)))
+  (reduce apply-event empty-kg events))
 
 (declare guard)
 
@@ -475,20 +539,53 @@
               (update acc :kg apply-event e)))
           {:kg base} events))
 
+(defn vocabulary
+  "An ontology graph's vocabulary, READ OUT of its nodes and edges
+   (wiki/Property-Graph.md): each node a type (title = its name, definition
+   = what it is, `:color`, `:icon`, `:learnable?` properties), each edge
+   type a relation whose from/to are the types its edges join and whose
+   words and flags are its edges' properties (`:label` `:inverse`
+   `:description` `:ordering?` `:acyclic?` `:symmetric?`)."
+  [kg]
+  (let [types (vec (for [c (sort-by :id (vals (:concepts kg))) :when (not= :deprecated (:status c))]
+                     (cond-> {:id (keyword (:id c)) :label (or (not-empty (:title c)) (:id c))}
+                       (seq (:definition c)) (assoc :description (:definition c))
+                       (string? (:color c)) (assoc :color (:color c))
+                       (string? (:icon c)) (assoc :icon (:icon c))
+                       (true? (:learnable? c)) (assoc :learnable? true))))
+        ids (set (map :id types))
+        rels (vec (for [[t es] (sort-by (comp str key) (group-by :type (:edges kg)))
+                        :when (not= :grounded-in t)
+                        :let [es (filter #(and (ids (keyword (:from %))) (ids (keyword (:to %)))) es)]
+                        :when (seq es)
+                        :let [w (apply merge (map #(select-keys % [:label :inverse :description :ordering? :acyclic? :symmetric?]) es))]]
+                    (cond-> {:id t :label (or (not-empty (:label w)) (name t))
+                             :from (set (map (comp keyword :from) es)) :to (set (map (comp keyword :to) es))}
+                      (seq (:inverse w)) (assoc :inverse (:inverse w))
+                      (seq (:description w)) (assoc :description (:description w))
+                      (true? (:ordering? w)) (assoc :ordering? true)
+                      (true? (:acyclic? w)) (assoc :acyclic? true)
+                      (true? (:symmetric? w)) (assoc :symmetric? true))))]
+    (profile/normalize {:id "ontology" :title (or (get-in kg [:graph :title]) "")
+                        :node-types types :relations rels})))
+
 (defn profile
   "The graph's ontology — the learning profile unless its log set one. An
-   ontology graph's own nodes are never learnable: courses live in the
-   graphs that use it."
+   ontology graph is described by its OWN vocabulary's relations (so its
+   edges read by name) over one node kind, never learnable: courses live in
+   the graphs that use it."
   [kg]
   (if (:ontology-graph? kg)
-    (update (:profile kg) :node-types (fn [ts] (mapv #(dissoc % :learnable?) ts)))
+    (-> (vocabulary kg)
+        (assoc :node-types [{:id :type :label "type"}])
+        (update :relations (fn [rs] (mapv #(dissoc % :ordering? :acyclic?) rs))))
     (or (:profile kg) profile/learning)))
 
 (defn defined
-  "The vocabulary as written — an ontology graph's own, flags and all;
+  "The vocabulary as written — an ontology graph's own, read out of it;
    else `profile`."
   [kg]
-  (if (:ontology-graph? kg) (:profile kg) (profile kg)))
+  (if (:ontology-graph? kg) (vocabulary kg) (profile kg)))
 
 ;; --- competency questions (wiki/Profiles.md): what the graph must answer ---
 ;; A CQ with a pattern is CHECKED here, mechanically — a model's opinion on

@@ -47,6 +47,8 @@
    [:id :keyword]
    [:label :string]
    [:color {:optional true} :string]
+   ;; a name from the app's icon set, drawn in the node (2026-11-19)
+   [:icon {:optional true} :string]
    [:learnable? {:optional true} :boolean]
    ;; one sentence a MODEL reads: what a node of this type is (2026-10-21 —
    ;; a label alone is how `triggers` came to be read backwards)
@@ -145,14 +147,17 @@
 (defn problems
   "nil when `p` is a sound custom profile, else a humanized explanation.
    Reserved ids keep the learning engine honest; exactly one ordering
-   relation keeps the layout decidable; from/to must name node types."
+   relation at most keeps the layout decidable; from/to must name node types."
   [p]
   (cond
     (not (m/validate schema p)) (me/humanize (m/explain schema p))
     (= "learning" (:id p)) {:id ["\"learning\" is the built-in profile"]}
     (reserved-problem p) (reserved-problem p)
-    (not= 1 (count (filter :ordering? (:relations p))))
-    {:relations ["exactly one relation must be the ordering one (:ordering? true)"]}
+    ;; at most one (2026-11-19: an ontology drawn on its map need not pick
+    ;; one; without it the layers layout has nothing to column by and the
+    ;; map stays free physics)
+    (< 1 (count (filter :ordering? (:relations p))))
+    {:relations ["at most one relation may be the ordering one (:ordering? true)"]}
     :else (shape-problem p)))
 
 (defn draft-problems

@@ -85,18 +85,26 @@
    [:spec :map]                                ; typed per kind; widget renders this
    [:template-id {:optional true} :string]])
 
+(def change-op
+  [:or
+   [:tuple [:= :graph-set] [:map-of :keyword :any]]
+   [:tuple [:= :node-set] :string [:map-of :keyword :any]]
+   [:tuple [:= :node-remove] :string]
+   [:tuple [:= :edge-set] :string :keyword :string [:map-of :keyword :any]]
+   [:tuple [:= :edge-remove] :string :keyword :string]])
+
 (def events
   {;; the graph's ontology, first in a custom graph's log; absent = learning
    :profile-set        (ev :profile-set :profile profile/schema)
-   ;; THE ONTOLOGY AS ITS OWN GRAPH (wiki/Ontology-Graph.md): first event of
-   ;; an ontology graph, with the vocabulary it starts from (may be empty).
-   ;; Its nodes are node types, its edges relations — the fold draws them
-   :ontology-graph-started (ev :ontology-graph-started :profile profile/draft-schema)
-   ;; a data graph's COPY of its ontology at a version (the ontology graph's
-   ;; last event id): the first one binds, later ones update. The data
-   ;; graph reads this copy, so it stays whole without the ontology graph
-   ;; (another device, a file, MCP). A copy that would break data is refused
-   :ontology-synced    (ev :ontology-synced :graph :string :version :string :profile profile/schema)
+   ;; THE PROPERTY-GRAPH CORE (wiki/Property-Graph.md): one generic event,
+   ;; a list of operations applied atomically and guarded together. Meaning
+   ;; lives in properties. Every graph names its ontology in `:ontology`:
+   ;; absent = the built-in learning one, "ontology" = the built-in one for
+   ;; describing vocabularies (nodes are types, edges relations, with their
+   ;; words and flags as edge properties), any other = a graph of the set,
+   ;; carried as `:ontology-copy` at `:ontology-version`. `:color-scheme`
+   ;; names how its map is drawn. A nil value removes a property.
+   :change             (ev :change :ops [:vector {:min 1} change-op])
    ;; the ontology grows ADDITIVELY (wiki/Profiles.md, competency questions):
    ;; a relation or node type may join a custom profile any time; nothing
    ;; in use is ever removed

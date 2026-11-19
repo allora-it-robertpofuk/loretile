@@ -328,17 +328,20 @@
             (when-not (shelve! gid evs) false))))))
 
 (defn ontology-graphs
-  "The ontology graphs on this device, as registry rows."
+  "The graphs on this device that describe a vocabulary (their ontology is
+   the built-in types one), as registry rows."
   []
-  (filter :ontology? @graphs))
+  (filter #(= fold/types-ontology (:ontology %)) @graphs))
 
 (defn- copy-event
-  "The event that gives a data graph the ontology graph `oid` as it stands."
+  "The event that gives a data graph the ontology graph `oid` as it stands:
+   a graph property holding the vocabulary read out of it (wiki/Property-Graph.md)."
   [oid]
   (let [evs (graph-events oid)
-        p (:profile (fold/kg evs))]
-    (when (and p (not (profile/problems p)))
-      (stamp nil {:ev/type :ontology-synced :graph oid :version (:ev/id (peek evs)) :profile p}))))
+        p (assoc (fold/vocabulary (fold/kg evs)) :id oid)]
+    (when (and (seq (:node-types p)) (not (profile/problems p)))
+      (stamp nil {:ev/type :change
+                  :ops [[:graph-set {:ontology oid :ontology-version (:ev/id (peek evs)) :ontology-copy p}]]}))))
 
 (defn whole-ontology?
   "Can a data graph take the ontology graph `oid` as it stands (a type, the
@@ -367,20 +370,37 @@
   (when-let [e (copy-event oid)]
     (doseq [{:keys [id]} (filter #(= oid (:ontology %)) @graphs)
             :let [v (get-in (fold/kg (graph-events id)) [:ontology :version])]
-            :when (not= v (:version e))]
+            :when (not= v (get-in e [:ops 0 1 :ontology-version]))]
       (let [err (append-to-log! id (assoc e :ev/ns id :ev/id (str (random-uuid))))]
         (swap! sync-refused (if (and err (:error err)) #(assoc % id err) #(dissoc % id)))))))
 
+(defn- vocabulary-ops
+  "A vocabulary written as an ontology graph's nodes and edges — what an
+   old graph's own ontology becomes when it moves over. A relation open at
+   an end (any type) has no edge to draw and is left out."
+  [p]
+  (concat
+   (for [t (:node-types p)]
+     [:node-set (name (:id t)) (cond-> {:title (:label t)}
+                                 (seq (:description t)) (assoc :definition (:description t))
+                                 (:color t) (assoc :color (:color t))
+                                 (:icon t) (assoc :icon (:icon t))
+                                 (:learnable? t) (assoc :learnable? true))])
+   (for [r (:relations p) :when (not= :grounded-in (:id r)) f (:from r) to (:to r)]
+     [:edge-set (name f) (:id r) (name to)
+      (select-keys r [:label :inverse :description :ordering? :acyclic? :symmetric?])])))
+
 (defn new-ontology-graph!
   "Shelve what is open, start an ontology graph (optionally from a
-   vocabulary) and open it. Its id, or nil when the open graph could not be
+   vocabulary) and open it. An ontology graph is an ordinary graph whose
+   graph property says so. Its id, or nil when the open graph could not be
    shelved."
   [title & [p]]
   (let [id (str "o-" (.toString (js/Date.now) 36))
-        e (stamp id {:ev/type :ontology-graph-started
-                     :profile (merge {:node-types [] :relations []} p {:id id :title title})})]
+        e (stamp id {:ev/type :change
+                     :ops (into [[:graph-set {:ontology fold/types-ontology :title title}]] (vocabulary-ops p))})]
     (when (and (shelve! @current @events)
-               (open! id [e] (conj @graphs {:id id :title title :ontology? true})))
+               (open! id [e] (conj @graphs {:id id :title title :ontology fold/types-ontology})))
       id)))
 
 (defn migrate-ontologies!
@@ -388,14 +408,16 @@
    the pre-2026-11-19 shape) gets an ontology graph made from it and is bound
    to it — the vocabulary moves, the data graph keeps a copy."
   []
-  (doseq [{:keys [id title ontology? ontology]} @graphs
-          :when (not (or ontology? ontology))
+  (doseq [{:keys [id title ontology]} @graphs
+          :when (not ontology)
           :let [kg (fold/kg (graph-events id)) p (:profile kg)]
           :when (and p (not (profile/learning? p)) (not (:ontology kg)) (not (:ontology-graph? kg)))]
     (let [oid (str "o-" id)
-          e (stamp oid {:ev/type :ontology-graph-started :profile (assoc p :id oid)})]
+          t (str (i18n/t :ui/ontology-of) " " title)
+          e (stamp oid {:ev/type :change
+                        :ops (into [[:graph-set {:ontology fold/types-ontology :title t}]] (vocabulary-ops p))})]
       (when (and (not (some #(= oid (:id %)) @graphs)) (shelve! oid [e]))
-        (reset! graphs (conj @graphs {:id oid :title (str (i18n/t :ui/ontology-of) " " title) :ontology? true}))
+        (reset! graphs (conj @graphs {:id oid :title t :ontology fold/types-ontology}))
         (persist-registry!)
         (bind! id oid)))))
 
@@ -440,16 +462,15 @@
 
 (defn import-as-new-graph!
   "A log file becomes a graph of its own (the Graphs view; importing used to
-   REPLACE the open graph). An ontology graph's log comes in as an ontology
-   graph. The file is checked BEFORE a graph is made: a refused log leaves
+   REPLACE the open graph). The registry learns its ontology from its log. The file is checked BEFORE a graph is made: a refused log leaves
    the open graph open and nothing behind. Its id, or nil."
   [title text]
   (if-let [err (:error (read-log text))]
     (do (reset! last-error err) nil)
     (when-let [id (new-graph! title)]
       (when (import-edn! text)
-        (when (:ontology-graph? (kg))
-          (reset! graphs (mapv #(cond-> % (= id (:id %)) (assoc :ontology? true)) @graphs))
+        (when-let [o (get-in (kg) [:graph :ontology])]
+          (reset! graphs (mapv #(cond-> % (= id (:id %)) (assoc :ontology o)) @graphs))
           (persist-registry!))
         id))))
 
@@ -462,7 +483,7 @@
   (cond
     (seq (ontology-users id)) (do (reset! last-error {:error :ontology-in-use :detail id}) false)
     (and (= id @current)
-         (not (if-let [other (first (remove #(or (= id (:id %)) (:ontology? %)) @graphs))]
+         (not (if-let [other (first (remove #(= id (:id %)) @graphs))]
                 (switch-graph! (:id other))
                 (new-graph! (i18n/t :ui/graph-first)))))
     false

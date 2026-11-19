@@ -678,8 +678,10 @@
   (is (= (f/title-tokens "over 5,000") (f/title-tokens "over 5k")) "amounts still read alike")
   (let [p {:id "x" :title "X" :node-types [{:id :thing :label "thing"}]
            :relations [{:id :grounded-in :label "grounded" :ordering? true}]}]
-    (is (= :bad-profile (:error (f/guard f/empty-kg (e :profile-set :profile p))))
-        "a profile whose only ordering relation is grounded-in loses it in normalisation")))
+    (is (nil? (f/guard f/empty-kg (e :profile-set :profile p)))
+        "a profile whose only ordering relation is grounded-in loses it in normalisation — and stands without one (2026-11-19)")
+    (is (nil? (:ordering? (first (filter #(= :grounded-in (:id %)) (:profile (f/kg [(e :profile-set :profile p)]))))))
+        "the flag does not survive on grounded-in")))
 
 (deftest two-lists-under-one-heading-text-stay-two
   ;; review 2026-10-16 A23: lists were told apart by their parent's TEXT
@@ -752,9 +754,9 @@
     (testing "the ontology is chosen once, for an empty graph"
       (is (= :profile-locked (:error (f/guard kg (e :profile-set :profile shop-profile)))))
       (is (= :profile-locked (:error (f/guard (f/kg (rest shop-events)) (e :profile-set :profile shop-profile))))))
-    (testing "reserved relations and a missing ordering relation are refused"
+    (testing "reserved relations are refused; an ontology without an ordering relation stands (2026-11-19)"
       (is (= :bad-profile (:error (f/guard f/empty-kg (e :profile-set :profile (update shop-profile :relations conj {:id :requires :label "x"}))))))
-      (is (= :bad-profile (:error (f/guard f/empty-kg (e :profile-set :profile (update shop-profile :relations #(mapv (fn [r] (dissoc r :ordering?)) %))))))))
+      (is (nil? (f/guard f/empty-kg (e :profile-set :profile (update shop-profile :relations #(mapv (fn [r] (dissoc r :ordering?)) %)))))))
     (testing "labels read in both directions"
       (is (= "запускается после" (profile/label p :triggers)))
       (is (= "запускает" (profile/label p :triggers true))))
@@ -834,53 +836,88 @@
     (testing "the learning profile does not grow this way"
       (is (= :profile-locked (:error (f/guard (f/kg sql-events) (e :relation-added :relation rel))))))))
 
-;; wiki/Ontology-Graph.md: the ontology is a graph of its own; a data graph
-;; carries a copy of it and never takes a copy that breaks its data
-(deftest an-ontology-is-its-own-graph
-  (let [started (e :ontology-graph-started :profile {:id "o-shop" :title "Магазин" :node-types [] :relations []})
-        onto (f/kg [started])]
-    (testing "it starts empty and grows without the whole-profile rules"
+;; wiki/Property-Graph.md: one `change` event for every graph; an ontology
+;; graph is an ordinary graph whose vocabulary is READ OUT of its nodes and
+;; edges; a data graph carries a copy of it and never takes one that breaks
+;; its data
+(defn- ch [& ops] (e :change :ops (vec ops)))
+
+(def shop-ontology
+  [(ch [:graph-set {:ontology "ontology" :title "Магазин"}]
+       [:node-set "process" {:title "процесс" :definition "Шаг работы." :color "#2fa36b" :learnable? true}]
+       [:node-set "role" {:title "роль"}]
+       [:node-set "rule" {:title "правило"}]
+       [:edge-set "process" :triggers "process" {:label "запускается после" :inverse "запускает" :ordering? true}]
+       [:edge-set "role" :performs "process" {:label "выполняет" :inverse "выполняется"}]
+       [:edge-set "process" :governed-by "rule" {:label "регулируется"}])])
+
+(deftest an-ontology-is-an-ordinary-graph
+  (let [onto (f/kg shop-ontology)
+        v (f/vocabulary onto)]
+    (testing "a graph property makes it an ontology graph; its nodes and edges are real"
       (is (:ontology-graph? onto))
-      (is (empty? (:concepts onto)))
-      (is (nil? (f/guard onto (e :node-type-added :node-type {:id :process :label "процесс"}))) "no ordering relation needed yet")
-      (is (= :ontology-graph-only (:error (f/guard onto (e :concept-accepted :concept (concept "x" "X")))))
-          "nothing but vocabulary is written in an ontology graph")
-      (is (= :profile-locked (:error (f/guard onto started))) "it starts once"))
-    (testing "its map is drawn from the vocabulary: types are nodes, relations edges per pair"
-      (let [kg (f/kg (into [(e :ontology-graph-started :profile shop-profile)]
-                           [(e :relation-added :relation {:id :open-end :label "касается"})]))]
-        (is (= #{"process" "role" "rule"} (set (keys (:concepts kg)))))
-        (is (= "процесс" (get-in kg [:concepts "process" :title])))
-        (is (= #{{:from "process" :to "process" :type :triggers}
-                 {:from "role" :to "process" :type :performs}
-                 {:from "process" :to "rule" :type :governed-by}}
-               (:edges kg)) "an open-ended relation and grounded-in draw no edge")
-        (is (not (profile/learnable? (f/profile (f/kg [(e :ontology-graph-started
-                                                          :profile (assoc-in shop-profile [:node-types 0 :learnable?] true))]))))
-            "an ontology graph's own nodes are never learnable")
-        (is (:learnable? (first (:node-types (f/defined (f/kg [(e :ontology-graph-started
-                                                                 :profile (assoc-in shop-profile [:node-types 0 :learnable?] true))])))))
-            "but the vocabulary as written keeps the flag")))
-    (testing "a data graph binds by a copy, reads it, and edits vocabulary only in the ontology graph"
-      (let [bound (f/kg (into [(e :ontology-synced :graph "o-shop" :version "v1" :profile shop-profile)]
-                              (rest shop-events)))]
+      (is (= #{"process" "role" "rule"} (set (keys (:concepts onto)))))
+      (is (= 3 (count (:edges onto)))))
+    (testing "its vocabulary is read out of them, properties and all"
+      (is (= [:process :role :rule] (mapv :id (:node-types v))))
+      (is (= {:id :process :label "процесс" :description "Шаг работы." :color "#2fa36b" :learnable? true}
+             (first (:node-types v))))
+      (let [perf (profile/relation v :performs)]
+        (is (= {:label "выполняет" :inverse "выполняется" :from #{:role} :to #{:process}}
+               (select-keys perf [:label :inverse :from :to]))))
+      (is (= :triggers (profile/ordering-relation v)))
+      (is (nil? (profile/problems v)) "whole, so a data graph can take it"))
+    (testing "the same events edit it: properties merge, nil removes, a second pair widens a relation"
+      (let [k (f/kg (conj shop-ontology
+                          (ch [:node-set "role" {:title "исполнитель" :color "#c94f7c"}]
+                              [:node-set "process" {:learnable? nil}]
+                              [:node-set "system" {:title "система"}]
+                              [:edge-set "system" :performs "process" {}])))
+            v (f/vocabulary k)]
+        (is (= "исполнитель" (:label (profile/node-type-of v :role))))
+        (is (not (:learnable? (profile/node-type-of v :process))))
+        (is (= #{:role :system} (:from (profile/relation v :performs))))))
+    (testing "removing a type takes its relations' edges with it"
+      (let [v (f/vocabulary (f/kg (conj shop-ontology (ch [:node-remove "rule"]))))]
+        (is (nil? (profile/node-type-of v :rule)))
+        (is (nil? (profile/relation v :governed-by)))))
+    (testing "an ontology graph has no conformance rules: any relation id, no usage checks"
+      (is (nil? (f/guard onto (ch [:edge-set "rule" :mentions "role" {:label "упоминает"}]))))
+      (is (nil? (f/guard onto (ch [:node-remove "process"])))))
+    (testing "the vocabulary it would leave stays sound: no reserved id, one ordering relation at most"
+      (is (= :bad-profile (:error (f/guard onto (ch [:edge-set "role" :requires "process" {}])))))
+      (is (= :bad-profile (:error (f/guard onto (ch [:edge-set "role" :performs "process" {:ordering? true}]))))))
+    (testing "the structural rules hold everywhere"
+      (is (= :missing-endpoint (:error (f/guard onto (ch [:edge-set "process" :x "nowhere" {}])))))
+      (is (= :missing (:error (f/guard onto (ch [:node-remove "nowhere"])))))
+      (is (= :invalid-schema (:error (f/guard onto (ch [:node-set "role" {:status :deprecated}])))) "the fold's own keys are not set by ops")
+      (is (= :missing-endpoint (:error (f/guard onto (ch [:node-set "a" {:title "A"}] [:edge-set "a" :x "b" {}]))))
+          "a change is refused whole at its first bad op"))
+    (testing "an ontology graph's own nodes are never learnable"
+      (is (not (profile/learnable? (f/profile onto))))
+      (is (= "выполняет" (profile/label (f/profile onto) :performs)) "its edges read by their relation's name"))
+    (testing "a data graph binds by a copy, reads it, and keeps vocabulary edits out"
+      (let [bind (ch [:graph-set {:ontology "o-shop" :ontology-version "v1" :ontology-copy (assoc v :id "o-shop")}])
+            bound (f/kg (into [bind] (rest shop-events)))]
         (is (= {:graph "o-shop" :version "v1"} (:ontology bound)))
         (is (= 4 (count (:concepts bound))))
         (is (= :ontology-elsewhere (:error (f/guard bound (e :node-type-added :node-type {:id :metric :label "метрика"})))))
+        (testing "a node property edit passes; a kind outside the ontology does not"
+          (is (nil? (f/guard bound (ch [:node-set "invoice" {:sla "2 дня" :owner "финансы"}]))))
+          (is (= "2 дня" (get-in (f/kg (into [bind] (conj (vec (rest shop-events)) (ch [:node-set "invoice" {:sla "2 дня"}])))) [:concepts "invoice" :sla])))
+          (is (= :unknown-node-type (:error (f/guard bound (ch [:node-set "invoice" {:kind :planet}]))))))
+        (testing "conformance holds for new edges in a data graph"
+          (is (= :relation-misfit (:error (f/guard bound (ch [:edge-set "vat" :performs "invoice" {}]))))))
         (testing "a copy that drops a type or relation in use is refused, with what it would break"
-          (let [no-rule (-> shop-profile
+          (let [no-rule (-> v (assoc :id "o-shop")
                             (update :node-types #(vec (remove (comp #{:rule} :id) %)))
                             (update :relations #(vec (remove (comp #{:governed-by} :id) %))))
-                err (f/guard bound (e :ontology-synced :graph "o-shop" :version "v2" :profile no-rule))]
+                err (f/guard bound (ch [:graph-set {:ontology-version "v2" :ontology-copy no-rule}]))]
             (is (= :ontology-breaks-data (:error err)))
             (is (= {:node-types [:rule] :relations [:governed-by]} (:detail err)))))
         (testing "a copy that only adds passes"
-          (is (nil? (f/guard bound (e :ontology-synced :graph "o-shop" :version "v2"
-                                      :profile (update shop-profile :node-types conj {:id :metric :label "метрика"}))))))
-        (testing "a copy must be a whole profile (one ordering relation)"
-          (is (= :bad-profile (:error (f/guard bound (e :ontology-synced :graph "o-shop" :version "v3"
-                                                        :profile (update shop-profile :relations
-                                                                         (fn [rs] (mapv #(dissoc % :ordering?) rs)))))))))))))
+          (is (nil? (f/guard bound (ch [:graph-set {:ontology-version "v2"
+                                                    :ontology-copy (update (assoc v :id "o-shop") :node-types conj {:id :metric :label "метрика"})}])))))))))
 
 (deftest the-fold-sees-ontology-pitfalls
   (let [profile (update shop-profile :relations conj {:id :related :label "связан с" :from #{:process} :to #{:process}})

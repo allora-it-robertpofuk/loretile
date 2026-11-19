@@ -59,7 +59,6 @@
               (= h "#/settings") {:view :settings}
               (= h "#/ontology") {:view :ontology}
               (= h "#/graphs") {:view :graphs}
-              (= h "#/ontologies") {:view :ontologies}
               (str/starts-with? h "#/learn/") {:view :learn :id (js/decodeURIComponent (subs h 8))}
               (str/starts-with? h "#/courses") {:view :catalog}
               :else {:view :map}))
@@ -175,8 +174,12 @@
         links (->> (:edges kg)
                    (remove #(= :grounded-in (:type %)))
                    (filter #(and (some #{(:from %)} ids) (some #{(:to %)} ids))))
-        sig [(set ids) (set (map (juxt :from :to :type) links)) @layout-mode]
-        layers? (= :layers @layout-mode)
+        sig [(set ids) (set (map (juxt :from :to :type) links)) @layout-mode (boolean (some #(= (profile/ordering-relation (fold/profile kg)) (:type %)) (:edges kg)))]
+        ;; layers only where there is something to column by: a graph with no
+        ;; ordering relation (any ontology graph, a fresh data graph) is free
+        ;; physics — one column of piled nodes hid every link (UX 2026-11-19)
+        ord (profile/ordering-relation (fold/profile kg))
+        layers? (and (= :layers @layout-mode) (some #(= ord (:type %)) (:edges kg)))
         dep (when layers? (depths kg (keys (:concepts kg))))
         maxd (apply max 0 (vals dep))
         col-x (fn [id] (when-let [d (get dep id)] (+ (/ w 2) (* (- d (/ maxd 2)) col-w))))]
@@ -234,10 +237,84 @@
 
 ;; --- map --------------------------------------------------------------------
 
+(def ^:private type-palette ["#4f7cff" "#2fa36b" "#c94f7c" "#d9822b" "#7c5cd6" "#1f9bb0" "#b08a1f" "#5b6b7c"])
+
+(defn- type-style
+  "A type's style as its ontology gives it: `:color` (else a palette colour
+   by its place in the vocabulary — the same in the ontology and in every
+   graph that uses it) and `:icon`."
+  [p kind]
+  (when-not (profile/learning? p)
+    (let [ts (profile/node-types p)
+          i (first (keep-indexed #(when (= kind (:id %2)) %1) ts))]
+      (when i
+        (let [t (nth ts i)]
+          {:color (or (:color t) (nth type-palette (mod i (count type-palette)))) :icon (:icon t)})))))
+
+(defn graph-type-style
+  "A type's style in this graph: the graph's own `:type-style` overrides
+   (its meta) over the ontology's defaults."
+  [kg kind]
+  (let [onto? (:ontology-graph? kg)
+        base (type-style (if onto? (fold/defined kg) (fold/profile kg)) kind)
+        own (when-not onto? (get-in kg [:graph :type-style kind]))]
+    (merge base (into {} (remove (comp nil? val)) own))))
+
+(defn node-style
+  "How a node is drawn, most specific first (Denis 2026-11-19): the node's
+   own `:color` / `:icon`, else its graph's style for its type, else the
+   ontology's, else the palette."
+  [kg c]
+  (let [kind (if (:ontology-graph? kg) (keyword (:id c)) (:kind c))
+        t (graph-type-style kg kind)]
+    {:color (or (:color c) (:color t)) :icon (or (:icon c) (:icon t))}))
+
+(defn type-color [p kind] (:color (type-style p kind)))
+
+(def ^:private type-icons
+  [:person :pin :clock :notes :link :photo :chat :graph :rows :mic :camera :inbox :info :gear :question :bug :clip :filter :locate :lineage])
+
+(defn- icon-picker
+  "The app's icons as a row of buttons; «—» clears."
+  [current on-pick]
+  [:div.icon-picker
+   (for [ic type-icons]
+     ^{:key ic}
+     [:button.icon-pick {:class (when (= (name ic) current) "on") :title (name ic) :aria-label (name ic)
+                         :on-click #(on-pick (name ic))}
+      [icons/icon ic]])
+   [:button.icon-pick.icon-none {:title (t :ui/icon-none) :aria-label (t :ui/icon-none) :on-click #(on-pick nil)} "—"]])
+
+(defn- style-controls
+  "Colour and icon for a node or a type. `style` is what is drawn now,
+   `own` what is set at this level (a reset × clears it back to inherited)."
+  [_ _ _]
+  (let [open? (r/atom false)]
+    (fn [style own put!]
+      [:div.style-controls
+       [:label.style-color
+        ;; uncontrolled, keyed by the colour drawn now: a controlled picker
+        ;; would snap back mid-drag. The browser's own `change` fires once,
+        ;; when a colour is chosen (React's onChange fires on every step)
+        ^{:key (str "c" (:color style))}
+        [:input.prop-color {:type "color" :default-value (or (:color style) "#8a8a8a")
+                            :ref (fn [el] (when el (set! (.-onchange el) #(put! {:color (.. % -target -value)}))))}]
+        (t :ui/prop-color)]
+       (when (:color own)
+         [:button.style-reset {:title (t :ui/style-reset) :aria-label (t :ui/style-reset) :on-click #(put! {:color nil})}
+          [icons/icon :close]])
+       [:button.icon-current {:class (when @open? "on") :title (t :ui/prop-icon) :on-click #(swap! open? not)}
+        (if-let [ic (:icon style)] [icons/icon (keyword ic)] "—")
+        [:span (t :ui/prop-icon)]]
+       (when (:icon own)
+         [:button.style-reset {:title (t :ui/style-reset) :aria-label (t :ui/style-reset) :on-click #(put! {:icon nil})}
+          [icons/icon :close]])
+       (when @open? [icon-picker (:icon style) #(do (put! {:icon %}) (reset! open? false))])])))
+
 (defn edge-line
   "Arrow points prerequisite → dependent (learning direction).
    from = dependent, to = prerequisite; shortened to the node rims."
-  [{:keys [from to type ghost?]} dim?]
+  [{:keys [from to type ghost?]} dim? & [reads?]]
   (let [p (get @positions to) q (get @positions from)]
     (cond
       (not (and p q)) nil
@@ -257,7 +334,19 @@
         [:line {:x1 (+ (:x p) (* ux r1)) :y1 (+ (:y p) (* uy r1))
                 :x2 (- (:x q) (* ux r2)) :y2 (- (:y q) (* uy r2))
                 :class (str "edge edge-" (name type) (when dim? " dim") (when ghost? " edge-ghost"))
-                :marker-end (when (= :requires type) "url(#arrow)")}]))))
+                :marker-end (when (= :requires type) "url(#arrow)")
+                ;; outside learning an arrow shows the reading direction:
+                ;; role —performs→ process points at the process (the `to` end)
+                :marker-start (when reads? "url(#arrow)")}]))))
+
+(defn- edge-text
+  "A relation's name at the middle of its edge (above the loop of a type →
+   same type)."
+  [{:keys [from to]} label]
+  (let [p (get @positions to) q (get @positions from)]
+    (when (and p q (seq label))
+      (let [[x y] (if (= from to) [(:x p) (- (:y p) R 34)] [(/ (+ (:x p) (:x q)) 2) (/ (+ (:y p) (:y q)) 2)])]
+        [:text.edge-text {:x x :y (- y 4) :text-anchor "middle"} label]))))
 
 ;; kintale tap semantics: a single tap SELECTS (halo) or feeds link mode;
 ;; a second tap on the selected node opens the concept as a popup window
@@ -296,6 +385,13 @@
 ;; --- pan / zoom (kintale graph.cljs's viewBox-driven vb, reduced) ---------
 ;; {:cx :cy :w :h} in graph units; nil until the map has a size
 (defonce vb (r/atom nil))
+
+;; another graph opened: its map starts fresh. The old viewport and spots
+;; stayed, so a new graph's first nodes landed where the LAST graph was
+;; being looked at — half off a phone's screen (UX walk 2026-11-19)
+(defonce ^:private view-reset
+  (add-watch store/current ::view-reset
+             (fn [_ _ old new] (when (not= old new) (reset! vb nil) (reset! positions {})))))
 (defonce ^:private pointers (atom {}))   ; pointer-id -> [clientX clientY]
 (def ^:private min-w 200)
 (def ^:private max-w 8000)
@@ -526,10 +622,13 @@
   ;; `mark` = :edit | :remove | :other — a merge-file change waiting on its card
   (let [c (get-in kg [:concepts id])
         p (get @positions id)
-        status (fold/concept-status kg id)
+        ;; status, glyph and material counts are LEARNING marks: a type or a
+        ;; business node is just a node (UX 2026-11-19)
+        learnable? (profile/learnable? (fold/profile kg))
+        status (if learnable? (fold/concept-status kg id) :plain)
         n-lo (count (fold/concept-objects kg id))
         n-it (count (fold/concept-items kg id))
-        empty? (and (= :accepted status) (zero? n-lo) (zero? n-it))
+        empty? (and learnable? (= :accepted status) (zero? n-lo) (zero? n-it))
         selected? (or (= id @graph-sel) (= id (:id @route)))
         linking? (= id (:from @link-mode))
         focus-class (when focus
@@ -593,12 +692,14 @@
                                                     @positions)
                                       (set! (.-fx n) nil) (set! (.-fy n) nil)))
                                 (node-click id))))}
-       ;; selection halo — kintale: accent ring offset from the node
+       ;; selection halo — kintale: a ring offset from the node, in the node's
+       ;; own colour (Denis 2026-11-19: the accent brown looked foreign on a
+       ;; blueprint map and around coloured types); accent when it has none
        (when (or selected? linking?)
-         [:circle {:r (+ R 8) :fill "none" :stroke "var(--accent)"
+         [:circle.halo {:r (+ R 8) :fill "none" :stroke (or (:color (node-style kg c)) "var(--accent)")
                    :stroke-width 2 :opacity 0.7
                    :stroke-dasharray (when linking? "6 4")}])
-       [:circle.node-body (if-let [color (:color (profile/node-type-of (fold/profile kg) (:kind c)))]
+       [:circle.node-body (if-let [color (:color (node-style kg c))]
                             {:r R :style {:fill color}}
                             {:r R})]
        ;; a merge-file edit or removal waiting on its card: a dashed halo,
@@ -618,18 +719,23 @@
                 [:circle.rel-ring {:r 11 :fill "none" :transform "rotate(-90)" :pathLength 100}]
                 [:text {:y 0.5 :text-anchor "middle" :dominant-baseline "middle" :font-size 11} "↺"]]
                [glyph :trash "currentColor" 13])]]))
-       [glyph (case status
-                :minimum-viable :notes :stale :clock :deprecated :minus
-                (if empty? :plus :pencil))
-        "var(--card)"]
+       ;; a style's icon draws in the node; else learning's status glyph
+       (if-let [ic (:icon (node-style kg c))]
+         [glyph (keyword ic) "var(--card)"]
+         (when learnable?
+           [glyph (case status
+                    :minimum-viable :notes :stale :clock :deprecated :minus
+                    (if empty? :plus :pencil))
+            "var(--card)"]))
        ;; the selected node shows its whole title; every node tells it on hover
        [:title (:title c)]
        [:text.node-label {:y (+ R 16)}
         ;; the selected one is drawn whole in the top layer (map-view)
         (when-not selected? (let [t (:title c)] (if (> (count t) 20) (str (subs t 0 19) "…") t)))]
-       [:text.node-sub {:y (+ R 30)}
-        (str (t :ui/node-sub-counts {"{n}" n-lo "{m}" n-it})
-             (when (fold/stale? kg (:id c)) (t :ui/node-stale-suffix)))]])))
+       (when learnable?
+         [:text.node-sub {:y (+ R 30)}
+          (str (t :ui/node-sub-counts {"{n}" n-lo "{m}" n-it})
+               (when (fold/stale? kg (:id c)) (t :ui/node-stale-suffix)))])])))
 
 (defn ghost-node
   "Chat proposal on the map before accept: kintale's dashed-ring ghost."
@@ -649,7 +755,7 @@
        [:text.node-label {:y (+ R 16) :opacity 0.75} (:title prop)]
        [:text.node-sub {:y (+ R 30)} (t :ui/ghost-hint)]])))
 
-(declare rail fullscreen-btn legend-btn layout-btn demos demos-on? pick-demo! merge-badge asof-btn)
+(declare rail fullscreen-btn legend-btn layout-btn demos demos-on? pick-demo! merge-badge asof-btn color-scheme node-words edge-label)
 
 (defn- mount-map!
   "Size the sim to the svg, seed the viewport once, bind the wheel once.
@@ -676,7 +782,9 @@
     (fn [this _] (mount-map! (second (r/argv this))))
     :reagent-render
     (fn [kg]
-      [:div.map-wrap
+      ;; the map's colour scheme is a graph property (Denis 2026-11-19); a
+      ;; graph describing types defaults to the blueprint look
+      [:div.map-wrap {:class (str "scheme-" (color-scheme kg))}
        [:div.map-tools [legend-btn] [layout-btn] [fullscreen-btn] [asof-btn] [merge-badge]]
        ;; the past is for looking at: no tools that write
        (when (nil? @store/as-of) [rail])
@@ -685,11 +793,13 @@
           [icons/icon :graph "empty-ico"]
           ;; the ONLY screen with no tour (it needs a graph to point at), so
           ;; it has to explain itself in a sentence
-          [:h2.empty-t (t :ui/empty-title)]
-          [:p (t :ui/empty-map-text)]
+          (cond
+            (:ontology-graph? kg) [:<> [:h2.empty-t (t :ui/empty-onto-title)] [:p (t :ui/empty-onto-text)]]
+            (profile/learning? (fold/profile kg)) [:<> [:h2.empty-t (t :ui/empty-title)] [:p (t :ui/empty-map-text)]]
+            :else [:<> [:h2.empty-t (t :ui/empty-graph-title)] [:p (t :ui/empty-graph-text)]])
           [:div.btnrow
            [:button.primary {:on-click #(reset! show-new-concept true)}
-            [icons/icon :plus] (t :ui/topic)]
+            [icons/icon :plus] (t (:button (node-words kg)))]
            [:a.btn {:href "#/chat"} [icons/icon :chat] (t :ui/assistant)]]
           ;; kintale's «load demo» — three subjects, one per pitch
           (when demos-on?
@@ -721,7 +831,12 @@
                 marks (chat/pending-marks)]
             [:<>
              (for [e (remove #(= :grounded-in (:type %)) (:edges kg))]
-               ^{:key (str e)} [edge-line e (and lit (not (and (lit (:from e)) (lit (:to e)))))])
+               ^{:key (str e)} [edge-line e (and lit (not (and (lit (:from e)) (lit (:to e)))))
+                                (not (profile/learning? (fold/profile kg)))])
+             ;; outside learning the relations ARE the content: name them on the map
+             (when-not (profile/learning? (fold/profile kg))
+               (for [e (remove #(= :grounded-in (:type %)) (:edges kg))]
+                 ^{:key (str "lbl" e)} [edge-text e (edge-label kg (:type e))]))
              ;; a proposed link, dashed like a ghost topic (a merge file's or the chat's)
              (for [[k p] (:proposals kg) :when (= :edge (:of p))]
                ^{:key (str k)} [edge-line (assoc p :ghost? true) false])
@@ -774,18 +889,26 @@
   (let [p (store/profile)]
     (when-not (profile/learning? p) (:id (first (profile/node-types p))))))
 
+(defn- node-words
+  "The add dialog speaks the graph's language: a type in an ontology graph,
+   a node in a graph on a custom ontology, a topic in learning."
+  [kg]
+  (cond (:ontology-graph? kg) {:heading :ui/new-type-heading :name :ui/type-name-placeholder :def :ui/type-def-placeholder :button :ui/type-word}
+        (profile/learning? (fold/profile kg)) {:heading :ui/new-topic-heading :name :ui/topic-name-placeholder :def :ui/definition-placeholder :button :ui/topic}
+        :else {:heading :ui/new-node-heading :name :ui/node-name-placeholder :def :ui/node-def-placeholder :button :ui/node-word}))
+
 (defn new-concept-form []
   (let [title (r/atom "") definition (r/atom "") kind (r/atom (default-kind))]
     (fn []
       [:div.form
-       [:h3 [icons/icon :plus] (t :ui/new-topic-heading)]
-       [node-type-select kind]
+       [:h3 [icons/icon :plus] (t (:heading (node-words (store/kg))))]
+       (when-not (:ontology-graph? (store/kg)) [node-type-select kind])
        ;; semi-controlled (CLAUDE.md gotcha): the map redraws every physics tick,
        ;; and a controlled field dropped keystrokes («Фильтры WHERE» → «иe»);
        ;; the form unmounts on save, so a reopen starts empty
-       [:input {:placeholder (t :ui/topic-name-placeholder) :default-value @title :ref focus!
+       [:input {:placeholder (t (:name (node-words (store/kg)))) :default-value @title :ref focus!
                 :on-change #(reset! title (.. % -target -value))}]
-       [:textarea {:placeholder (t :ui/definition-placeholder) :default-value @definition
+       [:textarea {:placeholder (t (:def (node-words (store/kg)))) :default-value @definition
                    :on-change #(reset! definition (.. % -target -value))}]
        [:div.row
         [:button.primary
@@ -1038,6 +1161,29 @@
                          (profile/fits? p (:id r) (kind-of from) (kind-of to)))]
           (:id r))))))
 
+(defn- new-relation-row
+  "In an ontology graph: draw type A → type B and name a new relation; its
+   words live on the edge (wiki/Property-Graph.md)."
+  [from to]
+  (let [label (r/atom "") inverse (r/atom "")]
+    (fn [from to]
+      [:div.new-relation
+       [:input.new-relation-label {:placeholder (t :ui/new-relation-placeholder) :default-value ""
+                                   :on-change #(reset! label (.. % -target -value))}]
+       [:input.new-relation-inverse {:placeholder (t :ui/rel-inverse-placeholder) :default-value ""
+                                     :on-change #(reset! inverse (.. % -target -value))}]
+       [:button.primary.new-relation-add
+        {:on-click (fn [_]
+                     (let [l (str/trim @label) id (keyword (slug l))]
+                       (when (seq (name id))
+                         (when-not (store/append!
+                                    {:ev/type :change
+                                     :ops [[:edge-set from id to (cond-> {:label l}
+                                                                   (seq (str/trim @inverse)) (assoc :inverse (str/trim @inverse)))]]})
+                           (snack! (t :ui/link-added)))
+                         (reset! link-draft nil))))}
+        (t :ui/new-relation)]])))
+
 (defn edge-type-chooser [kg]
   (when-let [{:keys [from to]} @link-draft]
     (let [t* (fn [id] (get-in kg [:concepts id :title] id))
@@ -1045,7 +1191,9 @@
       [:div.modal {:on-click #(reset! link-draft nil)}
        [:div.form {:on-click #(.stopPropagation %)}
         [:h3 [icons/icon :link] (str " «" (t* from) "» → «" (t* to) "»")]
-        (when (empty? offered) [:p.muted (t :ui/no-relation-fits)])
+        (when (and (empty? offered) (not (:ontology-graph? kg))) [:p.muted (t :ui/no-relation-fits)])
+        ;; an ontology graph names its relations as they are drawn
+        (when (:ontology-graph? kg) [new-relation-row from to])
         (for [edge-t offered]
           ^{:key edge-t}
           [:button.edge-btn
@@ -1440,12 +1588,115 @@
          (when @splitting [split-form kg c splitting])
          (when-not @splitting
            [:div.row
-            [:button.split-open {:on-click #(reset! splitting true)} (t :ui/split-open)]
+            ;; a type in an ontology graph is not split; its relations are its edges
+            (when-not (:ontology-graph? kg)
+              [:button.split-open {:on-click #(reset! splitting true)} (t :ui/split-open)])
             (if dep?
               [:span.muted.deprecated-note (t :ui/deprecated-note)]
               [:button.deprecate {:class (when pending? "pending")
                                   :on-click #(del-toggle! k {:ev/type :concept-deprecated :id id} :ui/deprecated-done)}
                (t (if pending? :ui/cancel :ui/deprecate))])])]))))
+
+;; --- node properties (wiki/Property-Graph.md) --------------------------------
+
+(def ^:private core-props
+  "Properties the panel already shows or the fold keeps — not in the free list."
+  #{:id :title :definition :kind :status :version :changed-by :changed-at :added-by
+    :stale? :tags :evidence :source-id :color :icon :learnable?})
+
+(defn- node-props
+  "A node's properties in the popup (Cloudscape's attribute-editor shape):
+   style first — colour and icon, overriding its graph's and ontology's;
+   in an ontology graph they are the type's defaults, plus «learnable» —
+   then one aligned row per property, key and value side by side, × at the
+   end; the last row adds (+, or Enter). Every edit is one `node-set` op;
+   an emptied value removes the property, a renamed key moves it. Inputs
+   are semi-controlled — the map redraws every tick and a controlled input
+   drops keys there."
+  [_ _]
+  (let [new-k (r/atom "") new-v (r/atom "") gen (r/atom 0)]
+    (fn [kg c]
+      (let [id (:id c)
+            put! (fn [props] (store/append! {:ev/type :change :ops [[:node-set id props]]}))
+            add! (fn []
+                   (let [k (keyword (slug @new-k)) v (str/trim @new-v)]
+                     (when (and (seq (name k)) (seq v) (not (core-props k)) (nil? (put! {k v})))
+                       (reset! new-k "") (reset! new-v "") (swap! gen inc))))
+            user (sort-by (comp name key) (remove (comp core-props key) c))
+            enter-blurs #(when (= "Enter" (.-key %)) (.blur (.-target %)))]
+        [:section.node-props
+         [:h3 (t :ui/properties)]
+         [style-controls (node-style kg c) (select-keys c [:color :icon]) put!]
+         (when (:ontology-graph? kg)
+           [:label.check.learnable-flag
+            [:input.prop-learnable {:type "checkbox" :checked (true? (:learnable? c))
+                                    :on-change #(put! {:learnable? (when (.. % -target -checked) true)})}]
+            " " (t :ui/learnable)])
+         [:div.kv-grid
+          (for [[k v] user]
+            ^{:key (str id k v)}
+            [:div.kv-row.prop-row
+             [:input.prop-key {:default-value (name k) :aria-label (t :ui/prop-key)
+                               :on-key-down enter-blurs
+                               :on-blur #(let [nk (keyword (slug (.. % -target -value)))]
+                                           (when (and (seq (name nk)) (not= nk k) (not (core-props nk)))
+                                             (put! {k nil nk v})))}]
+             [:input.prop-value {:default-value (str v) :aria-label (t :ui/prop-value)
+                                 :on-key-down enter-blurs
+                                 :on-blur #(let [x (str/trim (.. % -target -value))]
+                                             (when (not= x (str v)) (put! {k (when (seq x) x)})))}]
+             [:button.icon-btn.prop-x {:title (t :ui/delete) :aria-label (t :ui/delete) :on-click #(put! {k nil})}
+              [icons/icon :close]]])
+          ^{:key (str "add-" id "-" @gen)}
+          [:div.kv-row.prop-add
+           [:input.prop-new-key {:placeholder (t :ui/prop-key) :default-value ""
+                                 :on-change #(reset! new-k (.. % -target -value))}]
+           [:input.prop-new-value {:placeholder (t :ui/prop-value) :default-value ""
+                                   :on-change #(reset! new-v (.. % -target -value))
+                                   :on-key-down #(when (= "Enter" (.-key %)) (add!))}]
+           [:button.icon-btn.prop-add-btn {:title (t :ui/add) :aria-label (t :ui/add) :on-click #(add!)}
+            [icons/icon :plus]]]]]))))
+
+(defn- relation-props
+  "In an ontology graph, the relations touching this type, edited in place:
+   their words and flags are properties of every edge of the relation, so
+   one edit writes them all in one `change`."
+  [kg id]
+  (let [mine (into #{} (comp (filter #(or (= id (:from %)) (= id (:to %))))
+                             (map :type) (remove #{:grounded-in}))
+                   (:edges kg))]
+    (when (seq mine)
+      [:section.relation-props
+       [:h3 (t :ui/relations)]
+       (for [rt (sort-by str mine)
+             :let [all (filter #(= rt (:type %)) (:edges kg))
+                   w (apply merge (map #(select-keys % [:label :inverse :ordering? :acyclic?]) all))
+                   put! (fn [props] (store/append! {:ev/type :change
+                                                    :ops (vec (for [e all] [:edge-set (:from e) rt (:to e) props]))}))
+                   text (fn [cls k ph]
+                          [:input {:class cls :placeholder ph :default-value (or (get w k) "")
+                                   :on-key-down #(when (= "Enter" (.-key %)) (.blur (.-target %)))
+                                   :on-blur #(let [v (str/trim (.. % -target -value))]
+                                               (when (not= v (or (get w k) "")) (put! {k (when (seq v) v)})))}])
+                   flag (fn [cls k label]
+                          [:label.check [:input {:class cls :type "checkbox" :checked (true? (get w k))
+                                                 :on-change #(put! {k (when (.. % -target -checked) true)})}]
+                           " " label])]]
+         ^{:key (str rt (:label w) (:inverse w))}
+         [:div.relation-row
+          [:div.relation-head
+           [:code (name rt)]
+           ;; the whole relation: every edge of it, in one change
+           [:button.icon-btn.rel-delete
+            {:title (t :ui/delete) :aria-label (t :ui/delete)
+             :on-click #(when (js/confirm (t :ui/rel-delete-confirm {"{label}" (or (:label w) (name rt))}))
+                          (store/append! {:ev/type :change
+                                          :ops (vec (for [e all] [:edge-remove (:from e) rt (:to e)]))}))}
+            [icons/icon :trash]]]
+          (text "rel-label" :label (t :ui/rel-label-placeholder))
+          (text "rel-inverse" :inverse (t :ui/rel-inverse-placeholder))
+          (flag "rel-ordering" :ordering? (t :ui/rel-ordering))
+          (flag "rel-acyclic" :acyclic? (t :ui/rel-acyclic))])])))
 
 (defn concept-panel [kg id]
   (let [c (get-in kg [:concepts id])]
@@ -1458,15 +1709,19 @@
          [:div.panel-head
           [win-title win-size (:title c)]
           ;; a custom ontology names the node's type where learning shows status
-          (when-not (profile/learning? p)
-            [:span.badge.node-type-badge (profile/kind-label p (:kind c))])
-          [:span.badge {:class (status-class status)}
-           (t ({:minimum-viable :ui/status-ready :accepted :ui/status-accepted
-                :stale :ui/status-stale :deprecated :ui/status-deprecated :draft :ui/status-draft} status))]
+          (cond
+            (:ontology-graph? kg) [:span.badge.node-type-badge (t :ui/ontology-type)]
+            (not (profile/learning? p)) [:span.badge.node-type-badge (profile/kind-label p (:kind c))])
+          (when-not (:ontology-graph? kg)
+            [:span.badge {:class (status-class status)}
+             (t ({:minimum-viable :ui/status-ready :accepted :ui/status-accepted
+                  :stale :ui/status-stale :deprecated :ui/status-deprecated :draft :ui/status-draft} status))])
           [win-tools win-size]]
          [:div.def-row
           [editable concept-edit-form c
            [:p.def (:definition c)]]]
+         ^{:key (str "props-" id)} [node-props kg c]
+         (when (:ontology-graph? kg) [relation-props kg id])
          ;; the competency questions this node leaves unanswered (wiki/Profiles.md)
          (when-let [qs (seq (get (fold/cq-gaps kg) id))]
            [:p.node-gaps (t :ui/node-gaps) ": " (str/join " · " (map :question qs))])
@@ -1497,6 +1752,9 @@
                (t :ui/opens-arrow {"{title}" (get-in kg [:concepts from :title] from)})
                (str (edge-label kg type true) " ← " (get-in kg [:concepts from :title] from)))
              [edge-x e]])]
+         ;; a type in an ontology graph carries no learning material
+         (when-not (:ontology-graph? kg)
+          [:<>
          [:h3 [icons/icon :notes] (t :ui/lo-heading {"{n}" (count (fold/concept-objects kg id))})]
          (for [o (fold/concept-objects kg id)]
            ^{:key (:id o)}
@@ -1518,7 +1776,7 @@
          ^{:key (str "removed-" id)} [removed-material kg id]
          ;; keyed by topic: the panel swaps topics in place, and an unkeyed form
          ;; kept the FIRST topic it was opened on — a new question went there
-         ^{:key (str "lo-" id)} [add-object-form kg id]
+         ^{:key (str "lo-" id)} [add-object-form kg id]])
          (let [srcs (for [e (:edges kg) :when (and (= id (:from e)) (= :grounded-in (:type e)))] (:to e))]
            (when (seq srcs)
              [:<>
@@ -1756,21 +2014,55 @@
 
 ;; --- command palette (kintale cmd-*) -----------------------------------------
 
-(defn- new-graph-asked!
-  "Ask a title, start an empty graph, show its map."
-  []
-  (when-let [title (js/prompt (t :ui/new-graph-prompt))]
-    (when (seq (str/trim title))
-      (store/new-graph! (str/trim title))
-      (goto! "#/"))))
+;; One action makes any graph: a title and its ontology (Denis 2026-11-19 —
+;; no kind of graph is special). The built-in learning ontology, the
+;; built-in one for describing types, or any whole graph of the set that
+;; describes types.
+(defonce new-graph-form (r/atom nil))   ; nil | {:ontology id}
 
-(defn- new-ontology-asked!
-  "Ask a title, start an ontology graph (wiki/Ontology-Graph.md), show its page."
-  []
-  (when-let [title (js/prompt (t :ui/new-ontology-prompt))]
-    (when (seq (str/trim title))
-      (store/new-ontology-graph! (str/trim title))
-      (goto! "#/ontology"))))
+(defn- new-graph-asked!
+  ([] (new-graph-asked! "learning"))
+  ([ontology] (reset! new-graph-form {:ontology ontology})))
+
+(defn- new-ontology-asked! [] (new-graph-asked! fold/types-ontology))
+
+(defn- ontology-name
+  ([oid] (ontology-name oid false))
+  ([oid choice?]
+   (cond (or (nil? oid) (= "learning" oid)) (t :ui/ontology-learning-builtin)
+         (= fold/types-ontology oid) (t (if choice? :ui/ontology-types-choice :ui/ontology-types-builtin))
+         :else (store/graph-title oid))))
+
+(defn new-graph-modal []
+  (when-let [{:keys [ontology]} @new-graph-form]
+    (let [title (r/atom "")
+          choices (concat ["learning" fold/types-ontology]
+                          (map :id (filter #(store/whole-ontology? (:id %)) (store/ontology-graphs))))]
+      (fn []
+        (when-let [{:keys [ontology]} @new-graph-form]
+          [:div.modal {:on-click #(reset! new-graph-form nil)}
+           [:div.form.new-graph-form {:on-click #(.stopPropagation %)}
+            [:h3 [icons/icon :graph] " " (t :ui/new-graph)]
+            [:input.new-graph-title {:placeholder (t :ui/new-graph-prompt) :default-value "" :auto-focus true
+                                     :on-change #(reset! title (.. % -target -value))}]
+            [:label (t :ui/ontology) " "
+             [:select.new-graph-ontology {:value ontology
+                                          :on-change #(swap! new-graph-form assoc :ontology (.. % -target -value))}
+              (for [o choices] ^{:key o} [:option {:value o} (ontology-name o true)])]]
+            [:div.row
+             [:button.primary.new-graph-create
+              {:on-click (fn [_]
+                           (let [tt (str/trim @title)]
+                             (when (seq tt)
+                               (reset! new-graph-form nil)
+                               (cond
+                                 (= "learning" ontology) (do (store/new-graph! tt) (goto! "#/"))
+                                 (= fold/types-ontology ontology) (do (store/new-ontology-graph! tt) (goto! "#/ontology"))
+                                 :else (when-let [gid (store/new-graph! tt)]
+                                         (when-let [err (store/bind! gid ontology)] (reset! store/last-error err))
+                                         (goto! "#/"))))))}
+              (t :ui/create)]
+             [:button {:on-click #(reset! new-graph-form nil)} (t :ui/cancel)]]]])))))
 
 (defn palette-actions [kg]
   (concat
@@ -1780,7 +2072,7 @@
     {:label (t :ui/new-topic) :icon :plus :run #(reset! show-new-concept true)}
     {:label (t :ui/new-link) :icon :link :run #(reset! link-mode {:from nil})}
     {:label (t :ui/new-course) :icon :plus :run #(goto! "#/course/new")}
-    {:label (t :ui/new-graph) :icon :graph :run new-graph-asked!}
+    {:label (t :ui/new-graph) :icon :graph :run #(new-graph-asked!)}
     {:label (t :ui/new-ontology) :icon :lineage :run new-ontology-asked!}
     {:label (t :ui/export-log) :icon :open-ext :run store/export-edn!}
     ;; blobs never go to git: copy them to a folder of the curator's choosing
@@ -2010,7 +2302,7 @@
      [:button.rbtn.nav-legend {:title (t :ui/legend) :aria-label (t :ui/legend) :aria-expanded @open
                                :on-click #(swap! open not)} "?"]
      (when @open
-       (let [p (store/profile)]
+       (let [p (store/profile) kg (store/kg)]
          [:div.legend-card {:on-click #(reset! open false)}
           (if (profile/learning? p)
             [:<> [:b (t :tour/legend-t)] [:p (t :tour/legend)]]
@@ -2019,7 +2311,7 @@
              [:b (:title p)]
              [:p (for [nt (profile/node-types p)]
                    ^{:key (:id nt)}
-                   [:span.legend-type [:i.swatch {:style {:background (or (:color nt) "var(--accent)")}}] (:label nt) " "])]
+                   [:span.legend-type [:i.swatch {:style {:background (or (:color (graph-type-style kg (:id nt))) "var(--accent)")}}] (:label nt) " "])]
              [:p (str/join " · " (for [r (profile/relations p) :when (not= :grounded-in (:id r))]
                                    (str (:label r) (when (:ordering? r) " →"))))]])]))]))
 
@@ -2319,6 +2611,46 @@
                             (snack! (t :ui/owner-saved)))))}
            (t :ui/owner-save)]]]))))
 
+(def color-schemes ["default" "blueprint" "warm"])
+
+(defn color-scheme
+  "How a graph's map is drawn: its `:color-scheme` property, else blueprint
+   for a graph describing types, else the default."
+  [kg]
+  (or (get-in kg [:graph :color-scheme]) (if (:ontology-graph? kg) "blueprint" "default")))
+
+(defn- type-style-rows
+  "The graph's own style per type (its meta, `:type-style`): colour and icon
+   over what the ontology gives; × goes back to the ontology's."
+  [kg]
+  (let [p (fold/profile kg)
+        styles (or (get-in kg [:graph :type-style]) {})
+        put! (fn [kind props]
+               (let [m (into {} (remove (comp nil? val)) (merge (get styles kind) props))]
+                 (store/append! {:ev/type :change
+                                 :ops [[:graph-set {:type-style (if (seq m) (assoc styles kind m) (dissoc styles kind))}]]})))]
+    (when (and (not (:ontology-graph? kg)) (not (profile/learning? p)))
+      [:div.type-styles
+       [:h4 (t :ui/type-styles)]
+       (for [nt (profile/node-types p)]
+         ^{:key (:id nt)}
+         [:div.type-style-row
+          [:span.type-style-name (:label nt)]
+          [style-controls (graph-type-style kg (:id nt)) (get styles (:id nt)) #(put! (:id nt) %)]])])))
+
+(defn- graph-props-section
+  "The open graph's own properties: its map's colour scheme and its style
+   per type — `graph-set` ops."
+  [kg]
+  [:section.graph-props
+   [:h3 (t :ui/graph-props)]
+   [type-style-rows kg]
+   [:label (t :ui/color-scheme) " "
+    [:select.color-scheme {:value (color-scheme kg)
+                           :on-change #(store/append! {:ev/type :change
+                                                       :ops [[:graph-set {:color-scheme (.. % -target -value)}]]})}
+     (for [c color-schemes] ^{:key c} [:option {:value c} (t (keyword "ui" (str "scheme-" c)))])]]])
+
 (defn- ontology-users-section
   "An ontology graph's own page: the graphs on this device that use it, and
    a new graph that does."
@@ -2337,11 +2669,7 @@
       {:on-click (fn []
                    (if-not (store/whole-ontology? oid)
                      (reset! store/last-error {:error :no-whole-ontology})
-                     (when-let [title (js/prompt (t :ui/new-graph-prompt))]
-                       (when (seq (str/trim title))
-                         (when-let [gid (store/new-graph! (str/trim title))]
-                           (when-let [err (store/bind! gid oid)] (reset! store/last-error err))
-                           (goto! "#/"))))))}
+                     (new-graph-asked! oid)))}
       (t :ui/new-graph-from-ontology)]]))
 
 (defn ontology-page
@@ -2357,20 +2685,26 @@
         bound (get-in kg [:ontology :graph])
         ;; a bound graph's vocabulary is edited in its ontology graph
         ;; (wiki/Ontology-Graph.md); learning's is built in
-        fixed? (or learning? bound)
+        ;; an ontology graph is edited on its map (wiki/Property-Graph.md)
+        fixed? (or learning? bound onto?)
         loose (set (fold/unjustified-relations kg))
         n-kind (frequencies (map :kind (vals (:concepts kg))))
         n-rel (frequencies (map :type (:edges kg)))]
     [:div.settings-page.ontology-page
      [:a.back {:href "#/"} (t :ui/back-to-map)]
      [:h2 (t :ui/ontology)]
-     [:p.muted (if learning? (t :ui/ontology-learning-hint) (t :ui/ontology-hint))]
+     [:p.muted (cond learning? (t :ui/ontology-learning-hint)
+                     onto? (t :ui/ontology-graph-hint)
+                     bound (t :ui/ontology-bound-hint)
+                     :else (t :ui/ontology-hint))]
      (when bound
        [:p.bound-note (t :ui/bound-to) " "
         [:a {:href (str "#/g/" (js/encodeURIComponent bound) "/ontology")} (store/graph-title bound)]
         (when-let [{:keys [error detail]} (get @store/sync-refused @store/current)]
           [:span.sync-refused " " (t :ui/sync-refused {"{detail}" (if (= :ontology-breaks-data error) (pr-str detail) (name error))})])])
+     (when onto? [:p.edit-on-map (t :ui/ontology-edit-on-map)])
      (when onto? [ontology-users-section])
+     [graph-props-section kg]
      [owner-section kg]
      (when-not fixed? [:p.muted.vocab-hint (t :ui/vocab-hint)])
      [:section
@@ -2381,7 +2715,7 @@
           ^{:key (:id nt)}
           [:<>
            [:tr {:class (when-not learning? "has-desc")}
-            [:td [:i.swatch {:style {:background (or (:color nt) "var(--accent)")}}]]
+            [:td [:i.swatch {:style {:background (or (:color (graph-type-style kg (:id nt))) "var(--accent)")}}]]
             [:td [:code (name (:id nt))]]
             [:td (if learning? (t :ui/topic) (:label nt))]
             [:td.muted (when (:learnable? nt) (t :ui/learnable))]
@@ -2422,15 +2756,15 @@
 ;; opened, renamed, exported and deleted. Delete is absent for an ontology a
 ;; graph on this device still uses.
 
-(defn- entity-row [g onto?]
+(defn- entity-row [g]
   (let [id (:id g)
         open? (= id @store/current)
-        users (when onto? (store/ontology-users id))]
+        users (store/ontology-users id)]
     [:li.entity-row {:class (when open? "on")}
      [:a.entity-title {:href (str "#/g/" (js/encodeURIComponent id) "/")} (:title g)]
      [:span.muted.entity-meta
-      (cond onto? (t :ui/used-by {"{n}" (count users)})
-            (:ontology g) (str (t :ui/ontology-of) " " (store/graph-title (:ontology g))))
+      (str (t :ui/ontology-of) " " (ontology-name (:ontology g)))
+      (when (seq users) (str " · " (t :ui/used-by {"{n}" (count users)})))
       (when open? (str " · " (t :ui/open-now)))]
      [:span.entity-actions
       [:button.rename {:title (t :ui/rename) :aria-label (t :ui/rename)
@@ -2438,10 +2772,9 @@
                                     (when (seq (str/trim v)) (store/rename-graph! id (str/trim v))))}
        [icons/icon :pencil]]
       [:button.export-log {:title (t :ui/export) :on-click #(store/export-edn! id)} "edn"]
-      (when-not onto?
-        [:<>
-         [:button.export-agent {:title (t :ui/export-agent) :on-click #(store/export-md! id)} "md"]
-         [:button.export-ttl {:title (t :ui/export-turtle) :on-click #(store/export-ttl! id)} "ttl"]])
+      [:button.export-agent {:title (t :ui/export-agent) :on-click #(store/export-md! id)} "md"]
+      [:button.export-ttl {:title (t :ui/export-turtle) :on-click #(store/export-ttl! id)} "ttl"]
+      ;; a graph other graphs use as their ontology is not deleted under them
       (when (empty? users)
         [:button.delete {:title (t :ui/delete) :aria-label (t :ui/delete)
                          :on-click #(when (js/confirm (t :ui/delete-confirm {"{title}" (:title g)}))
@@ -2462,23 +2795,12 @@
    [:a.back {:href "#/"} (t :ui/back-to-map)]
    [:h2 (t :ui/graphs)]
    [:div.page-actions
-    [:button.primary.new-graph {:on-click new-graph-asked!} [icons/icon :plus] (t :ui/new-graph)]
+    [:button.primary.new-graph {:on-click #(new-graph-asked!)} [icons/icon :plus] (t :ui/new-graph)]
     (when demos-on?
       [:button.add-demo {:on-click #(reset! demo-picker-open true)} [icons/icon :graph] (t :ui/demos-title)])
     [import-graph-button]]
    [:ul.entity-list
-    (for [g (remove :ontology? @store/graphs)] ^{:key (:id g)} [entity-row g false])]])
-
-(defn ontologies-page []
-  (let [os (filter :ontology? @store/graphs)]
-    [:div.settings-page.ontologies-page
-     [:a.back {:href "#/"} (t :ui/back-to-map)]
-     [:h2 (t :ui/ontologies)]
-     [:div.page-actions
-      [:button.primary.new-ontology {:on-click new-ontology-asked!} [icons/icon :plus] (t :ui/new-ontology)]]
-     (if (seq os)
-       [:ul.entity-list (for [g os] ^{:key (:id g)} [entity-row g true])]
-       [:p.muted (t :ui/ontologies-none)])]))
+    (for [g @store/graphs] ^{:key (:id g)} [entity-row g])]])
 
 (defn settings-page []
   [:div.settings-page
@@ -2532,7 +2854,6 @@
          ;; graphs and ontologies are managed in their own views (Denis
          ;; 2026-11-19): open, rename, export, delete — the drawer only navigates
          [:a.nav-graphs {:role "button" :tab-index 0 :on-click #(go "#/graphs")} [icons/icon :graph] (t :ui/graphs)]
-         [:a.nav-ontologies {:role "button" :tab-index 0 :on-click #(go "#/ontologies")} [icons/icon :lineage] (t :ui/ontologies)]
          [:div.dsep]
          ;; merge files waiting on the bucket for the open graph (loretile.merge)
          (when-let [ms (seq (mrg/pending))]
@@ -2565,20 +2886,17 @@
   ;; on an empty graph only the two doors that CAN do something are shown
   ;; (kintale's rule: absence, never a disabled button). Exploration must
   ;; not be rewarded with silence.
-  ;; an ontology graph is edited on its ontology page until slice 2 of
-  ;; wiki/Ontology-Graph.md brings the map gestures: no add or link here yet
-  (let [empty? (empty? (:concepts (store/kg)))
-        onto? (:ontology-graph? (store/kg))]
+  ;; an ontology graph is edited like any graph: its nodes are types, its
+  ;; links relations (wiki/Property-Graph.md)
+  (let [empty? (empty? (:concepts (store/kg)))]
     [:div.rail
-     (when-not onto?
-       [:button.rbtn.nav-add {:title (t :ui/topic) :on-click #(reset! show-new-concept true)}
-        [icons/icon :plus]])
+     [:button.rbtn.nav-add {:title (t :ui/topic) :on-click #(reset! show-new-concept true)}
+      [icons/icon :plus]]
      (when-not empty?
        [:<>
-        (when-not onto?
-          [:button.rbtn.nav-link {:title (t :ui/link) :class (when @link-mode "on")
-                                  :on-click #(swap! link-mode (fn [m] (when-not m {:from nil})))}
-           [icons/icon :link]])
+        [:button.rbtn.nav-link {:title (t :ui/link) :class (when @link-mode "on")
+                                :on-click #(swap! link-mode (fn [m] (when-not m {:from nil})))}
+         [icons/icon :link]]
         [:button.rbtn.nav-ego {:title (t :ui/ego) :class (when @ego-mode "on")
                                :on-click #(swap! ego-mode not)}
          [icons/icon :lineage]]
@@ -2722,6 +3040,7 @@
         [tracker kg])]
      [drawer]
      [demo-picker]
+     [new-graph-modal]
      [error-banner]
      (when @show-new-concept
        [:div.modal {:on-click #(reset! show-new-concept false)}
@@ -2743,7 +3062,6 @@
          :settings [settings-page]
          :ontology [ontology-page kg]
          :graphs [graphs-page]
-         :ontologies [ontologies-page]
          ;; the assistant lives where you already are (Assistant design #1):
          ;; on the catalog, in learner mode, beside the courses
          :catalog [:div.split.catalog-split {:class "win-normal"} [catalog kg] [guide/view]]
