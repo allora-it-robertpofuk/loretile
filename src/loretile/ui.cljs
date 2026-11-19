@@ -1754,6 +1754,22 @@
 
 ;; --- command palette (kintale cmd-*) -----------------------------------------
 
+(defn- new-graph-asked!
+  "Ask a title, start an empty graph, show its map."
+  []
+  (when-let [title (js/prompt (t :ui/new-graph-prompt))]
+    (when (seq (str/trim title))
+      (store/new-graph! (str/trim title))
+      (goto! "#/"))))
+
+(defn- new-ontology-asked!
+  "Ask a title, start an ontology graph (wiki/Ontology-Graph.md), show its page."
+  []
+  (when-let [title (js/prompt (t :ui/new-ontology-prompt))]
+    (when (seq (str/trim title))
+      (store/new-ontology-graph! (str/trim title))
+      (goto! "#/ontology"))))
+
 (defn palette-actions [kg]
   (concat
    [{:label (t :ui/map) :icon :graph :run #(goto! "#/")}
@@ -1762,6 +1778,8 @@
     {:label (t :ui/new-topic) :icon :plus :run #(reset! show-new-concept true)}
     {:label (t :ui/new-link) :icon :link :run #(reset! link-mode {:from nil})}
     {:label (t :ui/new-course) :icon :plus :run #(goto! "#/course/new")}
+    {:label (t :ui/new-graph) :icon :graph :run new-graph-asked!}
+    {:label (t :ui/new-ontology) :icon :lineage :run new-ontology-asked!}
     {:label (t :ui/export-log) :icon :open-ext :run store/export-edn!}
     ;; blobs never go to git: copy them to a folder of the curator's choosing
     {:label (t :ui/save-sources-to-folder) :icon :inbox
@@ -2505,20 +2523,10 @@
             [icons/icon (if (:ontology? g) :lineage :graph)] (:title g)
             (when (:ontology? g) [:span.muted.graph-kind (t :ui/ontology-graph)])])
          [:a.new-ontology {:role "button" :tab-index 0
-                           :on-click (fn []
-                                       (close!)
-                                       (when-let [title (js/prompt (t :ui/new-ontology-prompt))]
-                                         (when (seq (str/trim title))
-                                           (store/new-ontology-graph! (str/trim title))
-                                           (goto! "#/ontology"))))}
+                           :on-click (fn [] (close!) (new-ontology-asked!))}
           [icons/icon :lineage] (t :ui/new-ontology)]
          [:a {:role "button" :tab-index 0
-              :on-click (fn []
-                          (close!)
-                          (when-let [title (js/prompt (t :ui/new-graph-prompt))]
-                            (when (seq (str/trim title))
-                              (store/new-graph! (str/trim title))
-                              (goto! "#/"))))}
+              :on-click (fn [] (close!) (new-graph-asked!))}
           [icons/icon :plus] (t :ui/new-graph)]
          [ontology-graph-button close!]
          ;; the assistant interviews the author and derives the ontology

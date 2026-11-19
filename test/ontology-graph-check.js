@@ -116,6 +116,25 @@ const check = (ok, name) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name); 
   check(await page.evaluate(() => location.hash) === '#/ontology' && await page.$('.ontology-users') !== null,
     'the deep link #/g/{ontology}/ontology opened that ontology graph\'s page');
 
+  // both are in the command palette too
+  const fromPalette = async (cmd, title) => {
+    answer = title;
+    await page.goto(BASE + '#/', { waitUntil: 'networkidle0' });
+    await sleep(400);
+    await page.keyboard.down('Control'); await page.keyboard.press('k'); await page.keyboard.up('Control');
+    await sleep(300);
+    await page.type('.cmd-input', cmd); await sleep(250);
+    await page.keyboard.press('Enter'); await sleep(800);
+  };
+  const before = (await registry()).match(/:id "/g).length;
+  await fromPalette('Новая онтология', 'Из палитры: онтология');
+  check(/Из палитры: онтология",? :ontology\? true/.test(await registry()) && /#\/ontology$/.test(await page.evaluate(() => location.hash)),
+    'the palette starts a new ontology and opens its page');
+  await fromPalette('Новый граф', 'Из палитры: граф');
+  const reg2 = await registry();
+  check(/Из палитры: граф"/.test(reg2) && reg2.match(/:id "/g).length === before + 2 && await nodes() === 0,
+    'the palette starts a new empty graph');
+
   await browser.close();
   console.log(failures ? 'ONTOLOGY GRAPH CHECK FAILED' : 'ONTOLOGY GRAPH CHECK OK');
   process.exit(failures ? 1 : 0);
