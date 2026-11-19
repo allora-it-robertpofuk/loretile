@@ -80,11 +80,55 @@
       (some #(not (targets (get object-remap %))) own-objects) :object-unassigned
       :else nil)))
 
+;; --- the ontology as its own graph (wiki/Ontology-Graph.md) -----------------
+
+(def ^:private ontology-graph-events
+  "What an ontology graph's log may hold: its vocabulary and who wrote it."
+  #{:ontology-graph-started :node-type-added :relation-added :vocabulary-described
+    :cq-raised :cq-retired :author-named :graph-owner-set})
+
+(def ^:private vocabulary-events #{:profile-set :node-type-added :relation-added :vocabulary-described})
+
+(defn sync-breaks
+  "What a new copy of the ontology would leave without meaning in this data
+   graph — node types its nodes are, relations its edges are — or nil."
+  [kg p]
+  (let [types (set (map :id (:node-types p)))
+        rels (set (map :id (:relations p)))
+        lost-types (->> (vals (:concepts kg)) (keep :kind) (remove types) distinct sort vec)
+        lost-rels (->> (:edges kg) (map :type) (remove rels) distinct sort vec)]
+    (when (or (seq lost-types) (seq lost-rels))
+      {:node-types lost-types :relations lost-rels})))
+
+(defn- vocabulary-problems
+  "An ontology graph is a vocabulary still being written (`draft-problems`);
+   anywhere else the profile must be whole (`problems`)."
+  [kg p]
+  (if (:ontology-graph? kg) (profile/draft-problems p) (profile/problems p)))
+
 (defn guard
   "nil when event may be appended, else {:error ...}."
   [kg e]
   (cond
     (not (schema/valid? e)) {:error :invalid-schema :detail (schema/explain e)}
+    ;; an ontology graph starts empty, once, and then holds vocabulary only —
+    ;; its map is drawn from that vocabulary, nothing else is written there
+    (and (= :ontology-graph-started (:ev/type e))
+         (or (some? (:profile kg)) (seq (:concepts kg)) (seq (:edges kg)) (seq (:proposals kg))))
+    {:error :profile-locked}
+    (and (= :ontology-graph-started (:ev/type e)) (profile/draft-problems (profile/normalize (:profile e))))
+    {:error :bad-profile :detail (profile/draft-problems (profile/normalize (:profile e)))}
+    (and (:ontology-graph? kg) (not (ontology-graph-events (:ev/type e))))
+    {:error :ontology-graph-only :detail (:ev/type e)}
+    ;; a data graph's copy of its ontology: whole, and never breaking data
+    (and (= :ontology-synced (:ev/type e)) (profile/problems (profile/normalize (:profile e))))
+    {:error :bad-profile :detail (profile/problems (profile/normalize (:profile e)))}
+    (and (= :ontology-synced (:ev/type e)) (sync-breaks kg (profile/normalize (:profile e))))
+    {:error :ontology-breaks-data :detail (sync-breaks kg (profile/normalize (:profile e)))}
+    ;; a bound graph's vocabulary is edited in its ontology graph, never here:
+    ;; a local addition would be lost — or block — at the next copy
+    (and (:ontology kg) (vocabulary-events (:ev/type e)))
+    {:error :ontology-elsewhere :detail (get-in kg [:ontology :graph])}
     ;; the ontology is chosen for an EMPTY graph, once: a vocabulary is the
     ;; meaning of every edge in the log, so it cannot change under them
     (and (= :profile-set (:ev/type e))
@@ -100,11 +144,11 @@
     (and (#{:relation-added :node-type-added} (:ev/type e)) (profile/learning? (:profile kg)))
     {:error :profile-locked}
     (and (= :relation-added (:ev/type e))
-         (profile/problems (update (:profile kg) :relations conj (:relation e))))
-    {:error :bad-profile :detail (profile/problems (update (:profile kg) :relations conj (:relation e)))}
+         (vocabulary-problems kg (update (:profile kg) :relations conj (:relation e))))
+    {:error :bad-profile :detail (vocabulary-problems kg (update (:profile kg) :relations conj (:relation e)))}
     (and (= :node-type-added (:ev/type e))
-         (profile/problems (update (:profile kg) :node-types conj (:node-type e))))
-    {:error :bad-profile :detail (profile/problems (update (:profile kg) :node-types conj (:node-type e)))}
+         (vocabulary-problems kg (update (:profile kg) :node-types conj (:node-type e))))
+    {:error :bad-profile :detail (vocabulary-problems kg (update (:profile kg) :node-types conj (:node-type e)))}
     ;; words on the vocabulary: a custom profile's own types and relations
     (and (= :vocabulary-described (:ev/type e)) (profile/learning? (:profile kg)))
     {:error :profile-locked}
@@ -245,6 +289,12 @@
 
 (defmethod apply-event :profile-set [kg {:keys [profile]}]
   (assoc kg :profile (profile/normalize profile)))
+
+(defmethod apply-event :ontology-graph-started [kg {:keys [profile]}]
+  (assoc kg :ontology-graph? true :profile (profile/normalize profile)))
+
+(defmethod apply-event :ontology-synced [kg {:keys [graph version profile]}]
+  (assoc kg :profile (profile/normalize profile) :ontology {:graph graph :version version}))
 
 (defmethod apply-event :relation-added [kg {:keys [relation]}]
   (update-in kg [:profile :relations] conj (dissoc relation :reserved?)))
@@ -388,10 +438,27 @@
 
 (defmethod apply-event :default [kg _] kg)
 
+(defn- drawn
+  "An ontology graph's map, drawn from its vocabulary: each node type a node
+   (id = the type's name, kind = the type), each relation one edge per
+   from → to pair it allows. A relation open at an end (empty from/to = any
+   type) draws no edge; it shows on the ontology page."
+  [kg]
+  (let [p (:profile kg)]
+    (assoc kg
+           :concepts (into {} (for [t (:node-types p)
+                                    :let [id (name (:id t))]]
+                                [id {:id id :title (:label t) :definition (or (:description t) "")
+                                     :kind (:id t) :status :accepted :version 1}]))
+           :edges (set (for [r (:relations p) :when (not (:reserved? r))
+                             f (:from r) t (:to r)]
+                         {:from (name f) :to (name t) :type (:id r)})))))
+
 (defn kg
   "The graph IS this fold."
   [events]
-  (reduce apply-event empty-kg events))
+  (let [k (reduce apply-event empty-kg events)]
+    (cond-> k (:ontology-graph? k) drawn)))
 
 (declare guard)
 
@@ -409,9 +476,19 @@
           {:kg base} events))
 
 (defn profile
-  "The graph's ontology — the learning profile unless its log set one."
+  "The graph's ontology — the learning profile unless its log set one. An
+   ontology graph's own nodes are never learnable: courses live in the
+   graphs that use it."
   [kg]
-  (or (:profile kg) profile/learning))
+  (if (:ontology-graph? kg)
+    (update (:profile kg) :node-types (fn [ts] (mapv #(dissoc % :learnable?) ts)))
+    (or (:profile kg) profile/learning)))
+
+(defn defined
+  "The vocabulary as written — an ontology graph's own, flags and all;
+   else `profile`."
+  [kg]
+  (if (:ontology-graph? kg) (:profile kg) (profile kg)))
 
 ;; --- competency questions (wiki/Profiles.md): what the graph must answer ---
 ;; A CQ with a pattern is CHECKED here, mechanically — a model's opinion on

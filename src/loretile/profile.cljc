@@ -117,18 +117,22 @@
 
 (defn reserved-ids [] (set (map :id (:relations learning))))
 
-(defn problems
-  "nil when `p` is a sound custom profile, else a humanized explanation.
-   Reserved ids keep the learning engine honest; exactly one ordering
-   relation keeps the layout decidable; from/to must name node types."
-  [p]
+(def draft-schema
+  "An ontology while it is written in its own graph (wiki/Ontology-Graph.md):
+   it may still be empty."
+  [:map
+   [:id :string]
+   [:title :string]
+   [:brief {:optional true} :string]
+   [:node-types [:vector node-type-schema]]
+   [:relations [:vector relation-schema]]])
+
+(defn- reserved-problem [p]
+  (when (some #(and (contains? (reserved-ids) (:id %)) (not= :grounded-in (:id %))) (:relations p))
+    {:relations ["requires, generalizes, is-confused-with, part-of and see-also are reserved for the learning engine"]}))
+
+(defn- shape-problem [p]
   (cond
-    (not (m/validate schema p)) (me/humanize (m/explain schema p))
-    (= "learning" (:id p)) {:id ["\"learning\" is the built-in profile"]}
-    (some #(and (contains? (reserved-ids) (:id %)) (not= :grounded-in (:id %))) (:relations p))
-    {:relations ["requires, generalizes, is-confused-with, part-of and see-also are reserved for the learning engine"]}
-    (not= 1 (count (filter :ordering? (:relations p))))
-    {:relations ["exactly one relation must be the ordering one (:ordering? true)"]}
     (let [ids (set (map :id (:node-types p)))]
       (some (fn [r] (some #(not (ids %)) (concat (:from r) (:to r)))) (:relations p)))
     {:relations ["from/to name node types that do not exist"]}
@@ -137,6 +141,33 @@
     (not= (count (:relations p)) (count (distinct (map :id (:relations p)))))
     {:relations ["duplicate ids"]}
     :else nil))
+
+(defn problems
+  "nil when `p` is a sound custom profile, else a humanized explanation.
+   Reserved ids keep the learning engine honest; exactly one ordering
+   relation keeps the layout decidable; from/to must name node types."
+  [p]
+  (cond
+    (not (m/validate schema p)) (me/humanize (m/explain schema p))
+    (= "learning" (:id p)) {:id ["\"learning\" is the built-in profile"]}
+    (reserved-problem p) (reserved-problem p)
+    (not= 1 (count (filter :ordering? (:relations p))))
+    {:relations ["exactly one relation must be the ordering one (:ordering? true)"]}
+    :else (shape-problem p)))
+
+(defn draft-problems
+  "The rules that hold WHILE an ontology is written in its own graph:
+   reserved ids, endpoints that exist, no duplicates, at most one ordering
+   relation. «At least one type» and «exactly one ordering relation» wait
+   until a data graph takes it — `problems` then."
+  [p]
+  (cond
+    (not (m/validate draft-schema p)) (me/humanize (m/explain draft-schema p))
+    (= "learning" (:id p)) {:id ["\"learning\" is the built-in profile"]}
+    (reserved-problem p) (reserved-problem p)
+    (< 1 (count (filter :ordering? (:relations p))))
+    {:relations ["at most one relation may be the ordering one (:ordering? true)"]}
+    :else (shape-problem p)))
 
 (defn normalize
   "A profile as read from the author's file: `grounded-in` added when

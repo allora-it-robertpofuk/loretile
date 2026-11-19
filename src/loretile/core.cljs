@@ -18,6 +18,7 @@
     (set! (.. js/document -body -textContent) "Loretile cannot run inside a frame.")
     (do
   (store/load!)
+  (store/migrate-ontologies!)       ; a graph carrying its own ontology gets an ontology graph (wiki/Ontology-Graph.md)
   (vectors/load!)
   (chat/restore!)
   (mrg/refresh!)                    ; merge files waiting for the open graph

@@ -29,23 +29,23 @@
 (defn goto! [hash] (set! js/location.hash hash))
 
 (defn- deep-link!
-  "#/g/{graph}[/c/{node}]: open that graph, then the plain route it stands
-   for, written back with replaceState (Back leaves the link, no loop). A
+  "#/g/{graph}[/{route}]: open that graph, then the plain route it stands
+   for (`/c/{node}`, `/ontology`, `/course/{id}` …), written back with replaceState (Back leaves the link, no loop). A
    graph not on this device gives «not found», never a same-slug node of the
    open graph: slugs mean nothing between graphs."
-  [g node]
+  [g rest]
   (let [g (js/decodeURIComponent g)]
     (when (and (not= g @store/current) (some #(= g (:id %)) @store/graphs))
       (store/switch-graph! g))
     (let [plain (cond (not= g @store/current) "#/c/"
-                      node (str "#/c/" node)
+                      (seq rest) (str "#" rest)
                       :else "#/")]
       (.replaceState js/history nil "" plain)
       plain)))
 
 (defn read-route! []
   (let [h (or js/location.hash "")
-        h (if-let [[_ g node] (re-find #"^#/g/([^/]+)(?:/c/(.+))?$" h)] (deep-link! g node) h)]
+        h (if-let [[_ g node] (re-find #"^#/g/([^/]+)(/.*)?$" h)] (deep-link! g node) h)]
     (reset! route
             (cond
               (str/starts-with? h "#/c/") {:view :concept :id (js/decodeURIComponent (subs h 4))}
@@ -237,7 +237,17 @@
    from = dependent, to = prerequisite; shortened to the node rims."
   [{:keys [from to type ghost?]} dim?]
   (let [p (get @positions to) q (get @positions from)]
-    (when (and p q)
+    (cond
+      (not (and p q)) nil
+      ;; a relation from a type to itself (an ontology graph: process
+      ;; triggers process) — a loop over the node, a line would be invisible
+      (= from to)
+      (let [{:keys [x y]} p]
+        [:path {:d (str "M" (- x 7) "," (- y R) " C" (- x 28) "," (- y R 38) " "
+                        (+ x 28) "," (- y R 38) " " (+ x 7) "," (- y R))
+                :fill "none"
+                :class (str "edge edge-loop edge-" (name type) (when dim? " dim"))}])
+      :else
       (let [dx (- (:x q) (:x p)) dy (- (:y q) (:y p))
             d (max 1 (js/Math.sqrt (+ (* dx dx) (* dy dy))))
             ux (/ dx d) uy (/ dy d)
@@ -1860,6 +1870,10 @@
        :relation-misfit (t :ui/error-relation-misfit {"{detail}" (pr-str detail)})
        :unknown-node-type (t :ui/error-unknown-node-type {"{detail}" (pr-str detail)})
        :profile-locked (t :ui/error-profile-locked)
+       :ontology-graph-only (t :ui/error-ontology-graph-only)
+       :ontology-elsewhere (t :ui/error-ontology-elsewhere {"{title}" (store/graph-title detail)})
+       :ontology-breaks-data (t :ui/error-ontology-breaks-data {"{detail}" (pr-str detail)})
+       :no-whole-ontology (t :ui/error-no-whole-ontology)
        :bad-profile (t :ui/error-bad-profile {"{detail}" (pr-str detail)})
        :bad-ontology (t :ui/error-bad-ontology {"{detail}" (str detail)})
        :bad-split (t :ui/error-bad-split {"{detail}" (t (keyword "ui" (str "split-why-" (name detail))))})
@@ -2171,7 +2185,7 @@
   "The ontology grows additively: a relation with its words and endpoints.
    The guard refuses a second ordering relation, a reserved id, a duplicate."
   [_]
-  (let [d (r/atom {:id "" :label "" :inverse "" :from "" :to "" :acyclic? false})]
+  (let [d (r/atom {:id "" :label "" :inverse "" :from "" :to "" :acyclic? false :ordering? false})]
     (fn [kg]
       (let [p (fold/profile kg)
             field (fn [k ph] [:input {:placeholder ph :default-value (get @d k)
@@ -2188,19 +2202,26 @@
          [:label.check [:input {:type "checkbox" :checked (:acyclic? @d)
                                 :on-change #(swap! d assoc :acyclic? (.. % -target -checked))}]
           " " (t :ui/rel-acyclic)]
+         ;; a new ontology graph starts without the one ordering relation a
+         ;; data graph needs (wiki/Ontology-Graph.md): offered until it exists
+         (when-not (some :ordering? (profile/relations p))
+           [:label.check [:input.rel-ordering {:type "checkbox" :checked (:ordering? @d)
+                                               :on-change #(swap! d assoc :ordering? (.. % -target -checked))}]
+            " " (t :ui/rel-ordering)])
          [:button.primary.relation-add
           {:disabled (or (str/blank? (:id @d)) (str/blank? (:label @d)))
            :on-click (fn [_]
-                       (let [{:keys [id label inverse from to acyclic?]} @d]
+                       (let [{:keys [id label inverse from to acyclic? ordering?]} @d]
                          (when (nil? (store/append!
                                       {:ev/type :relation-added
                                        :relation (cond-> {:id (keyword (slug id)) :label (str/trim label)}
                                                    (seq inverse) (assoc :inverse (str/trim inverse))
                                                    (seq from) (assoc :from #{(keyword from)})
                                                    (seq to) (assoc :to #{(keyword to)})
-                                                   acyclic? (assoc :acyclic? true))}))
+                                                   acyclic? (assoc :acyclic? true)
+                                                   ordering? (assoc :ordering? true))}))
                            (snack! (t :ui/relation-added))
-                           (reset! d {:id "" :label "" :inverse "" :from "" :to "" :acyclic? false}))))}
+                           (reset! d {:id "" :label "" :inverse "" :from "" :to "" :acyclic? false :ordering? false}))))}
           (t :ui/add-relation)]]))))
 
 (defn- node-type-form [kg]
@@ -2329,6 +2350,27 @@
                             (snack! (t :ui/owner-saved)))))}
            (t :ui/owner-save)]]]))))
 
+(defn- ontology-users-section
+  "An ontology graph's own page: the graphs on this device that use it, and
+   a new graph that does."
+  []
+  (let [oid @store/current
+        users (filter #(= oid (:ontology %)) @store/graphs)]
+    [:section.ontology-users
+     [:h3 (t :ui/ontology-users)]
+     (if (seq users)
+       [:ul (for [g users] ^{:key (:id g)}
+              [:li [:a {:href (str "#/g/" (js/encodeURIComponent (:id g)) "/")} (:title g)]])]
+       [:p.muted (t :ui/ontology-users-none)])
+     [:button.new-graph-from-ontology
+      {:on-click (fn []
+                   (when-let [title (js/prompt (t :ui/new-graph-prompt))]
+                     (when (seq (str/trim title))
+                       (when-let [gid (store/new-graph! (str/trim title))]
+                         (when-let [err (store/bind! gid oid)] (reset! store/last-error err))
+                         (goto! "#/")))))}
+      (t :ui/new-graph-from-ontology)]]))
+
 (defn ontology-page
   "The graph's vocabulary, read like Settings (sections, no modals): node
    types and relations with their inverse, endpoints, and how many nodes
@@ -2336,8 +2378,13 @@
    A custom ontology grows here (additively); learning's reserved
    vocabulary shows the same way, read-only."
   [kg]
-  (let [p (fold/profile kg)
+  (let [p (fold/defined kg)
         learning? (profile/learning? p)
+        onto? (:ontology-graph? kg)
+        bound (get-in kg [:ontology :graph])
+        ;; a bound graph's vocabulary is edited in its ontology graph
+        ;; (wiki/Ontology-Graph.md); learning's is built in
+        fixed? (or learning? bound)
         loose (set (fold/unjustified-relations kg))
         n-kind (frequencies (map :kind (vals (:concepts kg))))
         n-rel (frequencies (map :type (:edges kg)))]
@@ -2345,9 +2392,15 @@
      [:a.back {:href "#/"} (t :ui/back-to-map)]
      [:h2 (t :ui/ontology)]
      [:p.muted (if learning? (t :ui/ontology-learning-hint) (t :ui/ontology-hint))]
+     (when bound
+       [:p.bound-note (t :ui/bound-to) " "
+        [:a {:href (str "#/g/" (js/encodeURIComponent bound) "/ontology")} (store/graph-title bound)]
+        (when-let [{:keys [error detail]} (get @store/sync-refused @store/current)]
+          [:span.sync-refused " " (t :ui/sync-refused {"{detail}" (if (= :ontology-breaks-data error) (pr-str detail) (name error))})])])
+     (when onto? [ontology-users-section])
      [import-note-view]
      [owner-section kg]
-     (when-not learning? [:p.muted.vocab-hint (t :ui/vocab-hint)])
+     (when-not fixed? [:p.muted.vocab-hint (t :ui/vocab-hint)])
      [:section
       [:h3 (t :ui/node-types)]
       [:table.onto
@@ -2360,10 +2413,10 @@
             [:td [:code (name (:id nt))]]
             [:td (if learning? (t :ui/topic) (:label nt))]
             [:td.muted (when (:learnable? nt) (t :ui/learnable))]
-            [:td.muted.n (if learning? (count (:concepts kg)) (get n-kind (:id nt) 0))]]
+            [:td.muted.n (cond learning? (count (:concepts kg)) onto? "" :else (get n-kind (:id nt) 0))]]
            ;; what it means, on its own full-width line (a column was cut off)
-           (when-not learning? [:tr.desc-row [:td] [:td.desc-cell {:col-span 4} [describe-cell :node-type nt]]])])]]
-      (when-not learning? ^{:key (str "nt-" (count (profile/node-types p)))} [node-type-form kg])]
+           (when-not fixed? [:tr.desc-row [:td] [:td.desc-cell {:col-span 4} [describe-cell :node-type nt]]])])]]
+      (when-not fixed? ^{:key (str "nt-" (count (profile/node-types p)))} [node-type-form kg])]
      [:section
       [:h3 (t :ui/relations)]
       [:table.onto
@@ -2384,12 +2437,13 @@
                                                     (when (:symmetric? r) (t :ui/rel-symmetric))
                                                     ;; the «no relation without a reader» rule, mechanical
                                                     (when (and (loose (:id r)) (seq (:cqs kg))) (t :ui/rel-unjustified))]))]
-           [:td.muted.n (get n-rel (:id r) 0)]]
-          (when-not (or learning? (:reserved? r))
+           [:td.muted.n (if onto? "" (get n-rel (:id r) 0))]]
+          (when-not (or fixed? (:reserved? r))
             [:tr.desc-row [:td.desc-cell {:col-span 6} [describe-cell :relation r]]])])]]
-      (when-not learning? ^{:key (str "rel-" (count (profile/relations p)))} [relation-form kg])]
-     (when-not learning? [cq-section kg])
-     (when-not learning? [pitfalls-section kg])]))
+      (when-not fixed? ^{:key (str "rel-" (count (profile/relations p)))} [relation-form kg])]
+     ;; questions and pitfalls are checked over DATA — in the graphs that use it
+     (when-not (or learning? onto?) [cq-section kg])
+     (when-not (or learning? onto?) [pitfalls-section kg])]))
 
 (defn settings-page []
   [:div.settings-page
@@ -2448,7 +2502,16 @@
            [:a.graph-row {:role "button" :tab-index 0
                           :class (when (= (:id g) @store/current) "on")
                           :on-click (fn [] (close!) (store/switch-graph! (:id g)) (goto! "#/"))}
-            [icons/icon :graph] (:title g)])
+            [icons/icon (if (:ontology? g) :lineage :graph)] (:title g)
+            (when (:ontology? g) [:span.muted.graph-kind (t :ui/ontology-graph)])])
+         [:a.new-ontology {:role "button" :tab-index 0
+                           :on-click (fn []
+                                       (close!)
+                                       (when-let [title (js/prompt (t :ui/new-ontology-prompt))]
+                                         (when (seq (str/trim title))
+                                           (store/new-ontology-graph! (str/trim title))
+                                           (goto! "#/ontology"))))}
+          [icons/icon :lineage] (t :ui/new-ontology)]
          [:a {:role "button" :tab-index 0
               :on-click (fn []
                           (close!)
@@ -2512,15 +2575,20 @@
   ;; on an empty graph only the two doors that CAN do something are shown
   ;; (kintale's rule: absence, never a disabled button). Exploration must
   ;; not be rewarded with silence.
-  (let [empty? (empty? (:concepts (store/kg)))]
+  ;; an ontology graph is edited on its ontology page until slice 2 of
+  ;; wiki/Ontology-Graph.md brings the map gestures: no add or link here yet
+  (let [empty? (empty? (:concepts (store/kg)))
+        onto? (:ontology-graph? (store/kg))]
     [:div.rail
-     [:button.rbtn.nav-add {:title (t :ui/topic) :on-click #(reset! show-new-concept true)}
-      [icons/icon :plus]]
+     (when-not onto?
+       [:button.rbtn.nav-add {:title (t :ui/topic) :on-click #(reset! show-new-concept true)}
+        [icons/icon :plus]])
      (when-not empty?
        [:<>
-        [:button.rbtn.nav-link {:title (t :ui/link) :class (when @link-mode "on")
-                                :on-click #(swap! link-mode (fn [m] (when-not m {:from nil})))}
-         [icons/icon :link]]
+        (when-not onto?
+          [:button.rbtn.nav-link {:title (t :ui/link) :class (when @link-mode "on")
+                                  :on-click #(swap! link-mode (fn [m] (when-not m {:from nil})))}
+           [icons/icon :link]])
         [:button.rbtn.nav-ego {:title (t :ui/ego) :class (when @ego-mode "on")
                                :on-click #(swap! ego-mode not)}
          [icons/icon :lineage]]

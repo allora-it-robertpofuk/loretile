@@ -22,6 +22,7 @@ Learning platform: knowledge graph of small learning objects, per-learner master
 | Exercises, sandboxing, bench | `wiki/Code.md#exercises-exercisecljs` | `wiki/Exercises.md` · `wiki/Security-Review-2026-10-03.md` | exercise, bench, learn |
 | Ontology profiles | `wiki/Code.md#ontology-profiles` | `wiki/Profiles.md` | ontology, fold_test |
 | Ontology import from Turtle (Protégé, TopBraid, VocBench → a profile) | `wiki/Code.md#ontology-import-turtle` | `wiki/Profiles.md` § Ontology import | import, fold_test |
+| The ontology as its own graph: ontology graphs (types = nodes, relations = edges), data graphs bound by a copy, never-break sync, migration at load | `wiki/Code.md#the-ontology-as-its-own-graph` | `wiki/Ontology-Graph.md` | ontology-graph, fold_test `an-ontology-is-its-own-graph` (+ ontology, interview, probe, graphs) |
 | What a model reads: descriptions, owner, inferred links, RDF export | `wiki/Code.md#what-a-model-reads` | `wiki/Profiles.md` § What a model reads | meaning, gaps, fold_test |
 | Authors: who added and changed what (`:ev/actor`, `author-named`, Settings name) | `wiki/Code.md#authors` | `wiki/Profiles.md` § What a model reads | author, fold_test |
 | Competency questions · interview · gaps card · probe | `wiki/Code.md#competency-questions` | `wiki/Profiles.md` § Competency questions | ontology, interview, gaps, probe |

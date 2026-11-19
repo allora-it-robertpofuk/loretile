@@ -38,6 +38,20 @@
    :ui/graphs {:ru "Графы" :de "Graphen" :en "Graphs"}
    :ui/graph-first {:ru "Мой граф" :de "Mein Graph" :en "My graph"}
    :ui/new-graph {:ru "Новый граф" :de "Neuer Graph" :en "New graph"}
+   ;; the ontology as its own graph (wiki/Ontology-Graph.md)
+   :ui/ontology-graph {:ru "онтология" :de "Ontologie" :en "ontology"}
+   :ui/ontology-of {:ru "Онтология:" :de "Ontologie:" :en "Ontology:"}
+   :ui/new-ontology {:ru "Новая онтология" :de "Neue Ontologie" :en "New ontology"}
+   :ui/new-ontology-prompt {:ru "Название онтологии:" :de "Name der Ontologie:" :en "Ontology name:"}
+   :ui/bound-to {:ru "Онтология этого графа живёт в своём графе:" :de "Die Ontologie dieses Graphen lebt in einem eigenen Graphen:" :en "This graph's ontology lives in its own graph:"}
+   :ui/sync-refused {:ru "Последнюю версию онтологии граф не принял — она сломала бы данные: {detail}" :de "Die neueste Version der Ontologie hat dieser Graph nicht übernommen — sie würde Daten brechen: {detail}" :en "This graph did not take the newest version of the ontology — it would break data: {detail}"}
+   :ui/ontology-users {:ru "Графы с этой онтологией" :de "Graphen mit dieser Ontologie" :en "Graphs using this ontology"}
+   :ui/ontology-users-none {:ru "На этом устройстве её пока не использует ни один граф." :de "Auf diesem Gerät verwendet sie noch kein Graph." :en "No graph on this device uses it yet."}
+   :ui/new-graph-from-ontology {:ru "Новый граф с этой онтологией" :de "Neuer Graph mit dieser Ontologie" :en "New graph with this ontology"}
+   :ui/error-ontology-graph-only {:ru "В графе онтологии живут только типы и связи." :de "Ein Ontologie-Graph enthält nur Typen und Beziehungen." :en "An ontology graph holds only types and relations."}
+   :ui/error-ontology-elsewhere {:ru "Онтология этого графа правится в графе «{title}»." :de "Die Ontologie dieses Graphen wird im Graphen «{title}» bearbeitet." :en "This graph's ontology is edited in the graph «{title}»."}
+   :ui/error-ontology-breaks-data {:ru "Эта версия онтологии убрала бы то, чем пользуются данные: {detail}" :de "Diese Version der Ontologie entfernte, was die Daten verwenden: {detail}" :en "This version of the ontology would remove what the data uses: {detail}"}
+   :ui/error-no-whole-ontology {:ru "Онтология ещё не готова: нужен хотя бы один тип и ровно одна связь порядка." :de "Die Ontologie ist noch nicht fertig: mindestens ein Typ und genau eine Ordnungsbeziehung nötig." :en "The ontology is not ready yet: it needs at least one type and exactly one ordering relation."}
    :ui/new-graph-prompt {:ru "Название нового графа — например, тема учебника, который вы загрузите"
                          :de "Name des neuen Graphen, etwa das Thema des Dokuments, das Sie hochladen"
                          :en "Name the new graph, for instance the subject of the document you will upload"}

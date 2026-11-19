@@ -27,7 +27,7 @@
 (defonce graphs (r/atom []))
 (defonce current (r/atom "demo"))
 (defonce last-error (r/atom nil))
-(declare import-edn! read-log)
+(declare import-edn! read-log sync-bound!)
 
 ;; the fold is pure, so it is cached on the identity of the event vector:
 ;; renders call (kg) many times a frame, and every call re-folded the whole
@@ -303,8 +303,95 @@
           ;; the storage error stays in the banner — clearing it here showed
           ;; «saved» for work that was gone on reload (review 2026-10-16 A1)
           (if (persist!)
-            (do (reset! last-error nil) nil)
+            (do (reset! last-error nil)
+                ;; an ontology graph's change flows into the graphs bound to it
+                (when (:ontology-graph? (kg)) (sync-bound! @current))
+                nil)
             (do (swap! events pop) @last-error))))))))
+
+;; --- the ontology as its own graph (wiki/Ontology-Graph.md) ------------------
+
+(defonce sync-refused (r/atom {}))   ; data graph id -> guard error of the last copy it refused
+
+(defn- stamp [gid e]
+  (merge {:ev/id (str (random-uuid)) :ev/ns gid :ev/actor (:id @author) :ev/ts (js/Date.now)} e))
+
+(defn- append-to-log!
+  "Guard and append one event to ANY graph's log, open or shelved. nil on
+   success, the guard error otherwise (or false when storage refused)."
+  [gid e]
+  (let [evs (graph-events gid)]
+    (or (fold/guard (fold/kg evs) e)
+        (let [evs (conj evs e)]
+          (if (= gid @current)
+            (do (reset! events evs) (when-not (persist!) (swap! events pop) false))
+            (when-not (shelve! gid evs) false))))))
+
+(defn ontology-graphs
+  "The ontology graphs on this device, as registry rows."
+  []
+  (filter :ontology? @graphs))
+
+(defn- copy-event
+  "The event that gives a data graph the ontology graph `oid` as it stands."
+  [oid]
+  (let [evs (graph-events oid)
+        p (:profile (fold/kg evs))]
+    (when (and p (not (profile/problems p)))
+      (stamp nil {:ev/type :ontology-synced :graph oid :version (:ev/id (peek evs)) :profile p}))))
+
+(defn bind!
+  "Give graph `gid` the ontology graph `oid`: its copy goes into gid's log
+   and the registry remembers the binding, so changes flow. nil on success,
+   else the guard error (an incomplete ontology: `:no-whole-ontology`)."
+  [gid oid]
+  (if-let [e (copy-event oid)]
+    (let [err (append-to-log! gid (assoc e :ev/ns gid))]
+      (when (nil? err)
+        (reset! graphs (mapv #(cond-> % (= gid (:id %)) (assoc :ontology oid)) @graphs))
+        (persist-registry!))
+      err)
+    {:error :no-whole-ontology}))
+
+(defn sync-bound!
+  "After a change in the ontology graph `oid`: every graph bound to it on
+   this device takes the new copy — or refuses it when it would break data,
+   and stays on its version (`sync-refused` says why)."
+  [oid]
+  (when-let [e (copy-event oid)]
+    (doseq [{:keys [id]} (filter #(= oid (:ontology %)) @graphs)
+            :let [v (get-in (fold/kg (graph-events id)) [:ontology :version])]
+            :when (not= v (:version e))]
+      (let [err (append-to-log! id (assoc e :ev/ns id :ev/id (str (random-uuid))))]
+        (swap! sync-refused (if (and err (:error err)) #(assoc % id err) #(dissoc % id)))))))
+
+(defn new-ontology-graph!
+  "Shelve what is open, start an ontology graph (optionally from a
+   vocabulary) and open it. Its id, or nil when the open graph could not be
+   shelved."
+  [title & [p]]
+  (let [id (str "o-" (.toString (js/Date.now) 36))
+        e (stamp id {:ev/type :ontology-graph-started
+                     :profile (merge {:node-types [] :relations []} p {:id id :title title})})]
+    (when (and (shelve! @current @events)
+               (open! id [e] (conj @graphs {:id id :title title :ontology? true})))
+      id)))
+
+(defn migrate-ontologies!
+  "Once per graph: a graph that carries its own custom ontology (`profile-set`,
+   the pre-2026-11-19 shape) gets an ontology graph made from it and is bound
+   to it — the vocabulary moves, the data graph keeps a copy."
+  []
+  (doseq [{:keys [id title ontology? ontology]} @graphs
+          :when (not (or ontology? ontology))
+          :let [kg (fold/kg (graph-events id)) p (:profile kg)]
+          :when (and p (not (profile/learning? p)) (not (:ontology kg)) (not (:ontology-graph? kg)))]
+    (let [oid (str "o-" id)
+          e (stamp oid {:ev/type :ontology-graph-started :profile (assoc p :id oid)})]
+      (when (and (not (some #(= oid (:id %)) @graphs)) (shelve! oid [e]))
+        (reset! graphs (conj @graphs {:id oid :title (str (i18n/t :ui/ontology-of) " " title) :ontology? true}))
+        (persist-registry!)
+        (bind! id oid)))))
 
 (defn export-edn!
   "Download the log as log.edn — the author drops it into kg/{ns}/ in git."

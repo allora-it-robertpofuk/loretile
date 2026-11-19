@@ -88,6 +88,15 @@
 (def events
   {;; the graph's ontology, first in a custom graph's log; absent = learning
    :profile-set        (ev :profile-set :profile profile/schema)
+   ;; THE ONTOLOGY AS ITS OWN GRAPH (wiki/Ontology-Graph.md): first event of
+   ;; an ontology graph, with the vocabulary it starts from (may be empty).
+   ;; Its nodes are node types, its edges relations — the fold draws them
+   :ontology-graph-started (ev :ontology-graph-started :profile profile/draft-schema)
+   ;; a data graph's COPY of its ontology at a version (the ontology graph's
+   ;; last event id): the first one binds, later ones update. The data
+   ;; graph reads this copy, so it stays whole without the ontology graph
+   ;; (another device, a file, MCP). A copy that would break data is refused
+   :ontology-synced    (ev :ontology-synced :graph :string :version :string :profile profile/schema)
    ;; the ontology grows ADDITIVELY (wiki/Profiles.md, competency questions):
    ;; a relation or node type may join a custom profile any time; nothing
    ;; in use is ever removed
