@@ -924,11 +924,31 @@
 
 (defn accept-type-draft!
   "The missing kind joins the ONTOLOGY graph (another graph on this device)
-   and its copy comes back here — the nodes waiting for it can be accepted."
+   and its copy comes back here. The nodes that waited for it now go the
+   intake's normal way: proposed (ghosts on the map) and through the pair
+   search — so their links are found too (2026-11-20)."
   [{:keys [data] :as c}]
-  (if-let [err (store/add-to-ontology! (:graph data) [[:node-set (:id data) {:title (:title data)}]])]
-    (reset! store/last-error err)
-    (resolve-card! c)))
+  (let [home @store/current]
+    (if-let [err (store/add-to-ontology! (:graph data) [[:node-set (:id data) {:title (:title data)}]])]
+      (reset! store/last-error err)
+      (let [ws (filter #(= (:id data) (:waits-type %)) @cards)
+            ok (filterv #(nil? (store/append! {:ev/type :concept-proposed
+                                                :concept (concept-payload (:data %))
+                                                :provenance :llm-drafted}))
+                        ws)
+            ok? (set ok)]
+        (reset! store/last-error nil)
+        (resolve-card! c)
+        (swap! cards (fn [cs] (mapv #(if (ok? %) (dissoc % :waits-type) %) cs)))
+        (when (seq ok)
+          (reset! busy true)
+          ;; pending proposals count as nodes here, as the intake's `prior` does:
+          ;; the document's other nodes are usually still cards
+          (-> (propose-edges! (update (store/kg) :concepts merge
+                                      (into {} (for [[id pr] (:proposals (store/kg)) :when (= :concept (:of pr))] [id pr])))
+                              (mapv (comp concept-payload :data) ok) home)
+              (p/catch (fn [e] (swap! msgs conj {:who :sys :text (str (t :chat/error-prefix) (ex-message e))})))
+              (p/finally #(reset! busy false))))))))
 
 (defn- add-relation-drafts!
   "One card per relation the ontology lacks: its words and the type pairs

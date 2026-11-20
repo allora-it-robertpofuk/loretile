@@ -134,8 +134,9 @@ const REPLY = {
   await page.goto(BASE + '#/chat', { waitUntil: 'networkidle0' }); await sleep(300);
   await page.click('.chat-head .pt-new'); await sleep(200);
   await page.evaluate(() => { const b = document.querySelector('.keep'); if (b) b.click(); }); await sleep(200);
-  await drop(DOC, [{ concepts: [{ id: 'vat', title: 'НДС на услуги', type: 'rule', type_label: 'правило', definition: 'Ставка 20 %.' },
-                                { id: 'pay', title: 'Оплата поставщику', type: 'process', definition: 'Перевод денег.' }] }]);
+  await drop(DOC, [{ concepts: [{ id: 'vat', title: 'НДС на услуги', type: 'rule', type_label: 'правило', definition: 'Ставка 20 % на каждую Оплата поставщику.' },
+                                { id: 'pay', title: 'Оплата поставщику', type: 'process', definition: 'Перевод денег.' }] },
+                   { edges: [{ from: 'pay', to: 'vat', type: 'governed-by', label: 'регулируется', inverse: 'регулирует', why: 'ставка на оплату' }] }]);
   check(/подходит НИ К ОДНОМУ/.test((await page.evaluate(() => window.__calls))[0].system), 'with its ontology on this device, the intake may name a missing kind');
   const pile = () => page.$eval('.cards', (e) => e.textContent).catch(() => '');
   check(await page.$('.card-type-draft') !== null && /правило/.test(await pile()) && /Оплата поставщику/.test(await pile()) && !/НДС на услуги<|Ставка 20/.test(await pile()),
@@ -145,6 +146,11 @@ const REPLY = {
   const ologMatch = await page.evaluate((id) => localStorage.getItem('loretile-kg-log:' + id) || '', oid);
   check(/:node-set "rule" \{:title "правило"\}/.test(ologMatch), 'accepting writes the type into the ONTOLOGY graph');
   check(/Ставка 20/.test(await pile()), 'its copy comes back here and the waiting node is now a card');
+  check(/:concept-proposed[^}]*:id "vat"/.test(await log()), 'the node that waited is proposed now (a ghost on the map)');
+  const pairCall = (await page.evaluate(() => window.__calls)).find((c) => /НДС на услуги/.test(c.user) && /Оплата поставщику/.test(c.user) && c.user !== (window.__calls[0] || {}).user);
+  check(!!pairCall || (await page.evaluate(() => window.__calls.length)) >= 2, 'and the pair search runs over it — its links are asked');
+  check(await page.$('.card-relation-draft') !== null && /регулируется/.test(await pile()),
+    'a link it needs that the ontology lacks comes as a relation draft');
   await page.evaluate(() => [...document.querySelectorAll('.card')].find((c) => /НДС на услуги/.test(c.textContent)).querySelector('button.primary').click());
   await sleep(500);
   check(/:id "vat"[^}]*:kind :rule/.test(await log()), 'and is accepted with the new type');
