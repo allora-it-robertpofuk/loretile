@@ -130,6 +130,44 @@ const REPLY = {
   check(/файл онтологии/.test(await msgs()) && await page.$('.card-triage') === null,
     'an ontology file in a data graph that has its ontology is refused in words');
 
+  // SLICE 4: a kind the ontology lacks — its nodes wait, a card offers to add the type to the ontology graph
+  await page.goto(BASE + '#/chat', { waitUntil: 'networkidle0' }); await sleep(300);
+  await page.click('.chat-head .pt-new'); await sleep(200);
+  await page.evaluate(() => { const b = document.querySelector('.keep'); if (b) b.click(); }); await sleep(200);
+  await drop(DOC, [{ concepts: [{ id: 'vat', title: 'НДС на услуги', type: 'rule', type_label: 'правило', definition: 'Ставка 20 %.' },
+                                { id: 'pay', title: 'Оплата поставщику', type: 'process', definition: 'Перевод денег.' }] }]);
+  check(/подходит НИ К ОДНОМУ/.test((await page.evaluate(() => window.__calls))[0].system), 'with its ontology on this device, the intake may name a missing kind');
+  const pile = () => page.$eval('.cards', (e) => e.textContent).catch(() => '');
+  check(await page.$('.card-type-draft') !== null && /правило/.test(await pile()) && /Оплата поставщику/.test(await pile()) && !/НДС на услуги<|Ставка 20/.test(await pile()),
+    'a type-draft card for «правило»; the fitting node is a card, the waiting one is held back');
+  check(/Ждут этого типа: 1/.test(await pile()), 'the draft says how many nodes wait for it');
+  await page.click('.card-type-draft .type-draft-accept'); await sleep(600);
+  const ologMatch = await page.evaluate((id) => localStorage.getItem('loretile-kg-log:' + id) || '', oid);
+  check(/:node-set "rule" \{:title "правило"\}/.test(ologMatch), 'accepting writes the type into the ONTOLOGY graph');
+  check(/Ставка 20/.test(await pile()), 'its copy comes back here and the waiting node is now a card');
+  await page.evaluate(() => [...document.querySelectorAll('.card')].find((c) => /НДС на услуги/.test(c.textContent)).querySelector('button.primary').click());
+  await sleep(500);
+  check(/:id "vat"[^}]*:kind :rule/.test(await log()), 'and is accepted with the new type');
+
+  // DERIVE: the document makes an ontology first, then is read as this graph's content
+  await fresh('Пустой 3');
+  await drop(DOC, [REPLY, { concepts: [{ id: 'buh2', title: 'Бухгалтер', type: 'role', definition: 'Ведёт счета.' }] }]);
+  await page.click('.card-triage .triage-content');
+  await page.select('.card-triage .triage-which', 'derive');
+  await page.click('.card-triage .triage-go'); await sleep(1500);
+  const reg3 = await page.evaluate(() => localStorage.getItem('loretile-graphs'));
+  check(/:title "Онтология: процессы\.md", :ontology "ontology"/.test(reg3), 'derive: an ontology graph is made from the document');
+  check((await page.$$('.card-type')).length >= 1 && await page.$('.card-derive-next .derive-go[disabled]') !== null,
+    'its types are cards, and the next step waits until they are decided');
+  await page.evaluate(() => { const b = document.querySelector('.accept-all-topics'); if (b) b.click(); }); await sleep(400);
+  await page.evaluate(() => { const b = document.querySelector('.accept-all-links'); if (b) b.click(); }); await sleep(400);
+  await page.evaluate(() => { [...document.querySelectorAll('.relation-accept, .type-accept')].forEach((b) => b.click()); }); await sleep(500);
+  check(await page.$('.card-derive-next .derive-go:not([disabled])') !== null, 'decided: the next step can go');
+  await page.click('.card-derive-next .derive-go'); await sleep(1500);
+  const reg4 = await page.evaluate(() => localStorage.getItem('loretile-graphs'));
+  check(/:title "Пустой 3", :ontology "o-/.test(reg4), 'the graph the document was dropped in takes the derived ontology');
+  check(/Бухгалтер/.test(await pile()), 'and the document is read as its content');
+
   await fresh('Пустой 2');
   await drop(path.join(__dirname, '..', 'kg', 'ontologies', 'business.edn'), [REPLY]);
   check(await page.$eval('.card-triage .triage-ontology', (e) => e.checked).catch(() => false), 'an ontology file\'s guess: an ontology');

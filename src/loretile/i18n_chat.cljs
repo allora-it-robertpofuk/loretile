@@ -5,6 +5,16 @@
   {;; documents into an ontology graph (wiki/Ontology-Graph.md slice 3)
    :chat/accept-all-types {:ru "Принять все типы ({n})" :de "Alle Typen annehmen ({n})" :en "Accept all types ({n})"}
    :chat/accept-all-relations {:ru "Принять все связи ({n})" :de "Alle Beziehungen annehmen ({n})" :en "Accept all relations ({n})"}
+   :chat/triage-derive {:ru "вывести онтологию из этого документа" :de "die Ontologie aus diesem Dokument ableiten" :en "derive the ontology from this document"}
+   :chat/derive-tag {:ru "дальше" :de "weiter" :en "next"}
+   :chat/derive-lead {:ru "Когда типы и связи разобраны — прочитать «{doc}» как содержимое графа «{graph}» по этой онтологии." :de "Wenn Typen und Beziehungen entschieden sind — „{doc}“ als Inhalt des Graphen „{graph}“ nach dieser Ontologie lesen." :en "Once the types and relations are decided — read \"{doc}\" as the content of «{graph}» on this ontology."}
+   :chat/derive-wait {:ru "Ещё не разобрано карточек: {n}." :de "Noch {n} Karten offen." :en "{n} cards still open."}
+   :chat/derive-go {:ru "Прочитать как содержимое" :de "Als Inhalt lesen" :en "Read as content"}
+   :chat/type-draft-tag {:ru "нет такого типа" :de "Typ fehlt" :en "missing type"}
+   :chat/type-draft-q {:ru "Документ называет вид «{type}», которого нет в онтологии «{onto}». Добавить?" :de "Das Dokument nennt die Art „{type}“, die in der Ontologie „{onto}“ fehlt. Hinzufügen?" :en "The document names a kind «{type}» the ontology «{onto}» lacks. Add it?"}
+   :chat/type-draft-examples {:ru "например: {list}" :de "z. B.: {list}" :en "e.g.: {list}"}
+   :chat/type-draft-waiting {:ru "Ждут этого типа: {n}" :de "Warten auf diesen Typ: {n}" :en "Waiting for this type: {n}"}
+   :chat/type-draft-add {:ru "Добавить в онтологию" :de "Zur Ontologie hinzufügen" :en "Add to the ontology"}
    :chat/triage-tag {:ru "что это за документ?" :de "Was ist das für ein Dokument?" :en "what is this document?"}
    :chat/triage-q {:ru "«{name}» — это…" :de "„{name}“ ist…" :en "\"{name}\" is…"}
    :chat/triage-ontology {:ru "онтология — виды вещей и как они связаны" :de "eine Ontologie — Arten von Dingen und wie sie zusammenhängen" :en "an ontology — kinds of things and how they relate"}

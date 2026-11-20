@@ -353,6 +353,17 @@
   [oid]
   (some? (copy-event oid)))
 
+(defn graph-on-device? [id] (some #(= id (:id %)) @graphs))
+
+(defn add-to-ontology!
+  "Write ops into the ontology graph `oid` — another graph of this device —
+   and copy it to every graph bound to it (slice 4: a missing type joins the
+   ontology from a data graph's intake). nil on success, else the error."
+  [oid ops]
+  (let [err (append-to-log! oid (stamp oid {:ev/type :change :ops ops}))]
+    (when (nil? err) (sync-bound! oid))
+    err))
+
 (defn make-types-graph!
   "The open graph becomes one that describes types (its ontology property
    set to the built-in types one) — the one door's «this is an ontology» for

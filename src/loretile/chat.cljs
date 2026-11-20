@@ -480,6 +480,13 @@
        " \"note\":\"короткий комментарий куратору\"}" "\n"
        ;; i18n-ignore
        "Не выдумывай фактов — только из материала; чего не хватает, спрашивай через questions." "\n"
+       ;; the ontology graph is on this device: a missing kind can be ADDED to
+       ;; it (wiki/Ontology-Graph.md slice 4) — better than a wrong type
+       (when (some-> (store/kg) :ontology :graph store/graph-on-device?)
+         ;; i18n-ignore
+         (str "Если сущность не подходит НИ К ОДНОМУ из типов — не подгоняй: дай ей новый type (slug) и \"type_label\" — как называется этот вид;"
+              ;; i18n-ignore
+              " его предложат добавить в онтологию." "\n"))
        ;; i18n-ignore
        "Если пользователь не присылает материал, а СПРАШИВАЕТ о базе — ответь в note, concepts оставь пустыми."))))
 
@@ -880,6 +887,27 @@
                               :parent parent :parent-at parent-at
                               :steps (mapv #(select-keys % [:n :sub :title]) steps)}})))
 
+(declare resolve-card!)
+
+(defn- add-type-drafts!
+  "One card per kind the ontology lacks, naming the nodes that wait for it
+   (wiki/Ontology-Graph.md slice 4)."
+  [oid waiting]
+  (let [have (set (keep #(when (= :type-draft (:card %)) (get-in % [:data :id])) @cards))]
+    (swap! cards into
+           (for [[k ws] (group-by (comp str :type) waiting) :when (not (have k))]
+             {:card :type-draft
+              :data {:id k :title (or (some #(not-empty (:type_label %)) ws) k)
+                     :graph oid :examples (vec (take 3 (map :title ws)))}}))))
+
+(defn accept-type-draft!
+  "The missing kind joins the ONTOLOGY graph (another graph on this device)
+   and its copy comes back here — the nodes waiting for it can be accepted."
+  [{:keys [data] :as c}]
+  (if-let [err (store/add-to-ontology! (:graph data) [[:node-set (:id data) {:title (:title data)}]])]
+    (reset! store/last-error err)
+    (resolve-card! c)))
+
 (defn- intake-part!
   "One part of the material → topic cards, then link cards judged over
    this part's topics. `prior` = topics proposed from earlier parts of the
@@ -901,6 +929,14 @@
     (if-not (store/append-to? home)
       (p/rejected (ex-info "wrong graph" {:wrong-graph true}))
       (let [src (:source-id d)
+            ;; a kind the ontology lacks (slice 4): when the graph's ontology is
+            ;; on this device, those nodes wait for their type instead of being
+            ;; dropped — a type-draft card offers to add it to the ontology
+            oid (some-> (store/kg) :ontology :graph)
+            p (store/profile)
+            new-type? #(and oid (store/graph-on-device? oid) (seq (str (:type %)))
+                            (nil? (profile/node-type-of p (keyword (:type %)))))
+            {waiting true fits false} (group-by (comp boolean new-type?) (:concepts ops))
             ;; proposals land in the event log too — the map shows them as
             ;; dashed ghosts; the guard drops duplicates and re-proposals of
             ;; discarded things, and their cards with them. Concepts from a
@@ -909,7 +945,9 @@
                                   {:ev/type :concept-proposed
                                    :concept (concept-payload %)
                                    :provenance :llm-drafted}))
-                          (map #(cond-> % src (assoc :source-id src)) (:concepts ops)))]
+                          (map #(cond-> % src (assoc :source-id src)) fits))
+            waiting (map #(cond-> % src (assoc :source-id src)) waiting)]
+        (when (seq waiting) (add-type-drafts! oid waiting))
         ;; drops are expected here and reported in-chat — not in the banner
         (reset! store/last-error nil)
         (when (seq ok-c) (tour/maybe-chat-tour!))
@@ -919,9 +957,11 @@
           (swap! cards into (keep #(when ((intake-acts) (str (:name %))) (tools/action-card ctx %)) (:actions ops))))
         ;; step-1 edges (if a model still returns them) are ignored — step 2
         ;; judges engine candidates instead
-        (swap! cards into (ops->cards
-                           (assoc ops :concepts ok-c
-                                  :objects (map #(cond-> % src (assoc :source-id src)) (:objects ops)))))
+        (swap! cards into (map #(if-let [k (some (fn [w] (when (= (:id w) (get-in % [:data :id])) (:type w))) waiting)]
+                                  (assoc % :waits-type (str k)) %)
+                               (ops->cards
+                                (assoc ops :concepts (into ok-c waiting)
+                                       :objects (map #(cond-> % src (assoc :source-id src)) (:objects ops))))))
         (step! :edges)
         ;; where each topic sits in the document's numbered headings («#### 3. …»):
         ;; the pair search reads step order from it, as it reads page marks.
@@ -939,7 +979,7 @@
                                       (update :concepts #(into {} (map (fn [[id c]] [id (stepped c)])) %)))
                                   batch home)]
           {:concepts batch
-           :dropped (- (count (:concepts ops)) (count ok-c))
+           :dropped (- (count (:concepts ops)) (count ok-c) (count waiting))
            :note (:note ops)})))))
 
 (defn- part-label [{:keys [i n from to]}]
@@ -1126,6 +1166,13 @@
     (cond
       (= :ontology what)
       (when (nil? (store/make-types-graph!)) (ontology-intake! home doc nil))
+      ;; derive: an ontology graph is made and the document read there for its
+      ;; types and relations; a pinned card then reads it as THIS graph's content
+      (= "derive" ontology)
+      (when-let [oid (store/new-ontology-graph! (str (t :ui/ontology-of) " " (:name doc)))]
+        (ontology-intake! oid doc nil)
+        (swap! cards conj {:card :derive-next
+                           :data {:id (str "derive-" oid) :doc doc :graph home :ontology oid}}))
       (= "learning" ontology) (content-intake! home doc nil)
       :else (if-let [err (store/bind! home ontology)]
               (reset! store/last-error err)
@@ -2159,10 +2206,43 @@
        [:button.primary.compose-profile {:disabled (or @busy (foreign?)) :on-click compose-profile!} (t :chat/compose-profile)]
        [:p.muted (t :chat/onto-accept-first)])]))
 
+(defn derive-next!
+  "The derived ontology's cards are decided: back to the graph the document
+   was dropped in, bind it to the new ontology, read the document as content."
+  [{:keys [data] :as c}]
+  (let [{:keys [doc graph ontology]} data]
+    (resolve-card! c)
+    (when (and (or (= graph @store/current) (store/switch-graph! graph)) (new-conversation!))
+      (if-let [err (store/bind! graph ontology)]
+        (reset! store/last-error err)
+        (content-intake! graph doc nil)))))
+
+(defmethod card-view :derive-next [{:keys [data] :as c}]
+  (let [open (count (filter #(#{:type :relation} (:card %)) @cards))
+        whole? (store/whole-ontology? (:ontology data))]
+    [:div.card.card-build.card-derive-next
+     [:span.card-tag (t :chat/derive-tag)]
+     [:p (t :chat/derive-lead {"{doc}" (get-in data [:doc :name]) "{graph}" (store/graph-title (:graph data))})]
+     (cond (pos? open) [:p.muted (t :chat/derive-wait {"{n}" open})]
+           (not whole?) [:p.muted (t :ui/error-no-whole-ontology)])
+     [:button.primary.derive-go {:disabled (or @busy (foreign?) (pos? open) (not whole?)) :on-click #(derive-next! c)}
+      (t :chat/derive-go)]]))
+
+(defmethod card-view :type-draft [{:keys [data] :as c}]
+  (let [waiting (count (filter #(= (:id data) (:waits-type %)) @cards))]
+    [:div.card.card-type-draft
+     [:span.card-tag (t :chat/type-draft-tag)]
+     [:b (t :chat/type-draft-q {"{type}" (:title data) "{onto}" (store/graph-title (:graph data))})]
+     (when (seq (:examples data)) [:p.muted (t :chat/type-draft-examples {"{list}" (str/join ", " (:examples data))})])
+     (when (pos? waiting) [:p.muted (t :chat/type-draft-waiting {"{n}" waiting})])
+     [:div.row
+      [:button.primary.type-draft-accept {:disabled (or (foreign?) (:refused c)) :on-click #(accept-type-draft! c)} (t :chat/type-draft-add)]
+      [:button {:disabled (foreign?) :on-click #(resolve-card! c)} (t :chat/discard)]]]))
+
 (defmethod card-view :triage [{:keys [data] :as c}]
   (let [{:keys [doc what ontology]} data
         choose! (fn [k v] (swap! cards (fn [cs] (mapv #(if (= % c) (assoc-in % [:data k] v) %) cs))))
-        choices (cons "learning" (map :id (filter #(store/whole-ontology? (:id %)) (store/ontology-graphs))))]
+        choices (concat ["learning"] (map :id (filter #(store/whole-ontology? (:id %)) (store/ontology-graphs))) ["derive"])]
     [:div.card.card-triage
      [:span.card-tag (t :chat/triage-tag)]
      [:b (t :chat/triage-q {"{name}" (:name doc)})]
@@ -2174,7 +2254,7 @@
        [:label.triage-onto (t :chat/triage-which)
         [:select.triage-which {:value ontology :on-change #(choose! :ontology (.. % -target -value))}
          (for [o choices]
-           ^{:key o} [:option {:value o} (if (= "learning" o) (t :chat/triage-learning) (store/graph-title o))])]])
+           ^{:key o} [:option {:value o} (case o "learning" (t :chat/triage-learning) "derive" (t :chat/triage-derive) (store/graph-title o))])]])
      [:div.row
       [:button.primary.triage-go {:disabled (or @busy (foreign?)) :on-click #(triage-go! c)} (t :chat/triage-go)]
       [:button {:disabled (foreign?) :on-click #(resolve-card! c)} (t :chat/discard)]]]))
@@ -2482,10 +2562,13 @@
 (def ^:private batch 5)
 
 (defn- reviewable?
-  "A link card can only be accepted once both its topics exist."
-  [kg {:keys [card data]}]
-  (or (not= :edge card)
-      (and (get-in kg [:concepts (:from data)]) (get-in kg [:concepts (:to data)]))))
+  "A link card can only be accepted once both its topics exist; a topic of
+   a kind the ontology lacks, once that type joins it."
+  [kg {:keys [card data waits-type]}]
+  (cond
+    waits-type (some? (profile/node-type-of (fold/profile kg) (keyword waits-type)))
+    (not= :edge card) true
+    :else (and (get-in kg [:concepts (:from data)]) (get-in kg [:concepts (:to data)]))))
 
 (defn- cards-panel []
   (let [kg (store/kg)
@@ -2493,7 +2576,7 @@
         ;; the buttons refuse anyway
         ;; the guided «Your course» step is pinned above the pile, never
         ;; buried five-at-a-time behind the drafts it waits for
-        build? #(#{:build-next :profile-next :missing-steps :triage} (:card %))
+        build? #(#{:build-next :profile-next :missing-steps :triage :type-draft :derive-next} (:card %))
         pinned (filter build? @cards)
         pile (remove build? @cards)
         ready (if (foreign?) pile (filter #(reviewable? kg %) pile))
