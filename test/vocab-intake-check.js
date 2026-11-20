@@ -149,6 +149,25 @@ const REPLY = {
   await sleep(500);
   check(/:id "vat"[^}]*:kind :rule/.test(await log()), 'and is accepted with the new type');
 
+  // SLICE 4 — a relation the ontology lacks: the link waits, a card adds the relation to the ontology graph
+  await page.click('.chat-head .pt-new'); await sleep(200);
+  await page.evaluate(() => { const b = document.querySelector('.keep'); if (b) b.click(); }); await sleep(200);
+  const DOC2 = path.join(dir, 'налоги.md');
+  fs.writeFileSync(DOC2, '# Налоги\n\nГлавный бухгалтер проверяет налог на прибыль.\n');
+  await drop(DOC2, [{ concepts: [{ id: 'acc2', title: 'Главный бухгалтер', type: 'role', definition: 'Ведёт учёт.' },
+                                 { id: 'tax2', title: 'Налог на прибыль', type: 'rule', definition: 'Его проверяет Главный бухгалтер.' }] },
+                    { edges: [{ from: 'acc2', to: 'tax2', type: 'checks', label: 'проверяет', inverse: 'проверяется', why: 'так сказано' }] }]);
+  const sys2 = (await page.evaluate(() => window.__calls)).map((c) => c.system).join('\n');
+  check(/НЕТ в списке/.test(sys2), 'the link step may name a relation the ontology lacks');
+  check(await page.$('.card-relation-draft') !== null && /проверяет/.test(await pile()), 'a relation-draft card for «проверяет»');
+  await page.click('.card-relation-draft .relation-draft-accept'); await sleep(600);
+  check(/:edge-set "role" :checks "rule" \{:label "проверяет", :inverse "проверяется"\}/.test(await page.evaluate((id) => localStorage.getItem('loretile-kg-log:' + id) || '', oid)),
+    'accepting writes the relation into the ONTOLOGY graph, between the two types');
+  await page.evaluate(() => { const b = document.querySelector('.accept-all-topics'); if (b) b.click(); }); await sleep(500);
+  await page.evaluate(() => { [...document.querySelectorAll('.card')].filter((c) => /проверяет/.test(c.textContent) && c.querySelector('button.primary')).forEach((c) => c.querySelector('button.primary').click()); });
+  await sleep(500);
+  check(/:edge-accepted[^}]*:from "acc2", :to "tax2", :type :checks/.test(await log()), 'the waiting link is accepted once its relation and both nodes exist');
+
   // DERIVE: the document makes an ontology first, then is read as this graph's content
   await fresh('Пустой 3');
   await drop(DOC, [REPLY, { concepts: [{ id: 'buh2', title: 'Бухгалтер', type: 'role', definition: 'Ведёт счета.' }] }]);

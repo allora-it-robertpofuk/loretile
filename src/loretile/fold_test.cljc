@@ -931,6 +931,18 @@
           (is (nil? (f/guard bound (ch [:graph-set {:ontology-version "v2"
                                                     :ontology-copy (update (assoc v :id "o-shop") :node-types conj {:id :metric :label "метрика"})}])))))))))
 
+(deftest an-ontology-that-can-grow-hears-about-unfitting-pairs
+  ;; slice 4 (2026-11-20): role ↔ rule has no relation in the shop ontology;
+  ;; a signalled pair of them is asked only when the ontology can grow
+  (let [kg (f/kg shop-events)
+        batch [{:id "boss" :title "Главный бухгалтер" :definition "Ведёт учёт." :kind :role}
+               {:id "tax" :title "Налог" :definition "Его проверяет Главный бухгалтер." :kind :rule}]
+        pair? (fn [cs] (some #(= #{"boss" "tax"} #{(:a %) (:b %)}) cs))]
+    (is (not (pair? (f/edge-candidates kg batch 20))) "closed: no relation fits, never asked")
+    (let [c (first (filter #(= #{"boss" "tax"} #{(:a %) (:b %)}) (f/edge-candidates kg batch 20 {:open? true})))]
+      (is (some? c) "open: the signalled pair is asked")
+      (is (= [] (:fits c)) "with no relation to suggest"))))
+
 (deftest properties-reach-every-reader
   ;; 2026-11-19: what a person sets on a node or an edge in the popup must
   ;; reach the agent export, the RDF and the read tools — not only the app

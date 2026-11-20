@@ -15,6 +15,9 @@
    :chat/type-draft-examples {:ru "например: {list}" :de "z. B.: {list}" :en "e.g.: {list}"}
    :chat/type-draft-waiting {:ru "Ждут этого типа: {n}" :de "Warten auf diesen Typ: {n}" :en "Waiting for this type: {n}"}
    :chat/type-draft-add {:ru "Добавить в онтологию" :de "Zur Ontologie hinzufügen" :en "Add to the ontology"}
+   :chat/relation-draft-tag {:ru "нет такой связи" :de "Beziehung fehlt" :en "missing relation"}
+   :chat/relation-draft-q {:ru "Документ называет связь «{rel}», которой нет в онтологии «{onto}». Добавить?" :de "Das Dokument nennt die Beziehung „{rel}“, die in der Ontologie „{onto}“ fehlt. Hinzufügen?" :en "The document names a relation «{rel}» the ontology «{onto}» lacks. Add it?"}
+   :chat/relation-draft-waiting {:ru "Ждут этой связи: {n}" :de "Warten auf diese Beziehung: {n}" :en "Waiting for this relation: {n}"}
    :chat/triage-tag {:ru "что это за документ?" :de "Was ist das für ein Dokument?" :en "what is this document?"}
    :chat/triage-q {:ru "«{name}» — это…" :de "„{name}“ ist…" :en "\"{name}\" is…"}
    :chat/triage-ontology {:ru "онтология — виды вещей и как они связаны" :de "eine Ontologie — Arten von Dingen und wie sie zusammenhängen" :en "an ontology — kinds of things and how they relate"}

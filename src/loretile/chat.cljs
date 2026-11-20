@@ -511,7 +511,14 @@
        ;; i18n-ignore
        "{\"edges\":[{\"from\":\"slug\",\"to\":\"slug\",\"type\":\"id связи\",\"why\":\"одна строка\"}]}" "\n"
        ;; i18n-ignore
-       "Пары с type none не включай."))))
+       "Пары с type none не включай."
+       ;; the ontology graph is on this device: a missing relation can be
+       ;; ADDED to it (wiki/Ontology-Graph.md slice 4)
+       (when (some-> (store/kg) :ontology :graph store/graph-on-device?)
+         ;; i18n-ignore
+         (str "\nЕсли материал явно называет связь, которой НЕТ в списке, — не подгоняй: дай новый type (slug),"
+              ;; i18n-ignore
+              " \"label\" (как читается) и \"inverse\" (как читается обратно); её предложат добавить в онтологию."))))))
 
 (defn- default-relation
   "What an edge without a type means: `requires`, or the ordering
@@ -614,6 +621,8 @@
       ;; A20); a budget refusal still stops the run
       (p/catch (fn [e] (if (:budget (ex-data e)) (p/rejected e) [])))))
 
+(declare add-relation-drafts!)   ; slice 4, with the type drafts below
+
 (defn- propose-edges!
   "Step 2 of the intake: engine candidates among the just-proposed concepts
    (and existing ones they mention) → model verdicts, in batches of
@@ -622,21 +631,34 @@
    intake started in: the judged pairs land only there (the author may have
    switched graphs during the calls — review 2026-10-16 A10)."
   [kg batch home]
-  (let [cands (fold/edge-candidates kg batch (pair-budget (count batch)))]
+  (let [cands (fold/edge-candidates kg batch (pair-budget (count batch))
+                                    ;; an ontology on this device can grow: ask about
+                                    ;; signalled pairs no relation fits yet (slice 4)
+                                    {:open? (boolean (some-> (store/kg) :ontology :graph store/graph-on-device?))})]
     (if (empty? cands)
       (p/resolved 0)
       (p/let [found (p/all (map #(judge-pairs! kg %) (partition-all pair-cap cands)))]
         (if-not (store/append-to? home)
           (p/rejected (ex-info "wrong graph" {:wrong-graph true}))
-        (let [ok-e (filterv #(nil? (store/append!
+        (let [p (store/profile)
+              oid (some-> (store/kg) :ontology :graph)
+              ;; a relation the ontology lacks (slice 4): when the ontology is on
+              ;; this device the link waits for it instead of being refused
+              new-rel? #(and oid (store/graph-on-device? oid) (seq (str (:type %)))
+                             (nil? (profile/relation p (keyword (:type %)))))
+              {waiting true fits false} (group-by (comp boolean new-rel?) (apply concat found))
+              ok-e (filterv #(nil? (store/append!
                                     {:ev/type :edge-proposed
                                      :edge {:from (:from %) :to (:to %)
                                             :type (keyword (or (:type %) (default-relation)))
                                             :provenance :llm-drafted
                                             :justification (:why %)}}))
-                            (apply concat found))]
+                            fits)]
           (reset! store/last-error nil)
           (swap! cards into (for [e ok-e] {:card :edge :data e}))
+          (when (seq waiting)
+            (add-relation-drafts! oid kg waiting)
+            (swap! cards into (for [e waiting] {:card :edge :data e :waits-relation (str (:type e))})))
           (count ok-e)))))))
 
 ;; --- search over the concept index --------------------------------------------
@@ -907,6 +929,36 @@
   (if-let [err (store/add-to-ontology! (:graph data) [[:node-set (:id data) {:title (:title data)}]])]
     (reset! store/last-error err)
     (resolve-card! c)))
+
+(defn- add-relation-drafts!
+  "One card per relation the ontology lacks: its words and the type pairs
+   it would join, read off the waiting links' endpoints."
+  [oid kg waiting]
+  (let [have (set (keep #(when (= :relation-draft (:card %)) (get-in % [:data :id])) @cards))
+        kind (fn [id] (or (get-in kg [:concepts id :kind]) (get-in kg [:proposals id :kind])))
+        title (fn [id] (or (get-in kg [:concepts id :title]) (get-in kg [:proposals id :title]) id))]
+    (swap! cards into
+           (for [[k es] (group-by (comp str :type) waiting) :when (not (have k))]
+             {:card :relation-draft
+              :data {:id k :graph oid
+                     :label (or (some #(not-empty (:label %)) es) k)
+                     :inverse (some #(not-empty (:inverse %)) es)
+                     :pairs (vec (distinct (keep (fn [e] (let [a (kind (:from e)) b (kind (:to e))]
+                                                           (when (and a b) [(name a) (name b)])))
+                                                 es)))
+                     :examples (vec (take 2 (map #(str (title (:from %)) " → " (title (:to %))) es)))}}))))
+
+(defn accept-relation-draft!
+  "The missing relation joins the ONTOLOGY graph — one edge per type pair it
+   joins, its words as properties — and its copy comes back here."
+  [{:keys [data] :as c}]
+  (let [props (cond-> {:label (:label data)} (seq (:inverse data)) (assoc :inverse (:inverse data)))
+        ops (vec (for [[a b] (:pairs data)] [:edge-set a (keyword (:id data)) b props]))]
+    (if (empty? ops)
+      (resolve-card! c)
+      (if-let [err (store/add-to-ontology! (:graph data) ops)]
+        (reset! store/last-error err)
+        (resolve-card! c)))))
 
 (defn- intake-part!
   "One part of the material → topic cards, then link cards judged over
@@ -2228,6 +2280,17 @@
      [:button.primary.derive-go {:disabled (or @busy (foreign?) (pos? open) (not whole?)) :on-click #(derive-next! c)}
       (t :chat/derive-go)]]))
 
+(defmethod card-view :relation-draft [{:keys [data] :as c}]
+  (let [waiting (count (filter #(= (:id data) (:waits-relation %)) @cards))]
+    [:div.card.card-relation-draft
+     [:span.card-tag (t :chat/relation-draft-tag)]
+     [:b (t :chat/relation-draft-q {"{rel}" (:label data) "{onto}" (store/graph-title (:graph data))})]
+     (when (seq (:examples data)) [:p.muted (t :chat/type-draft-examples {"{list}" (str/join "; " (:examples data))})])
+     (when (pos? waiting) [:p.muted (t :chat/relation-draft-waiting {"{n}" waiting})])
+     [:div.row
+      [:button.primary.relation-draft-accept {:disabled (or (foreign?) (:refused c)) :on-click #(accept-relation-draft! c)} (t :chat/type-draft-add)]
+      [:button {:disabled (foreign?) :on-click #(resolve-card! c)} (t :chat/discard)]]]))
+
 (defmethod card-view :type-draft [{:keys [data] :as c}]
   (let [waiting (count (filter #(= (:id data) (:waits-type %)) @cards))]
     [:div.card.card-type-draft
@@ -2564,9 +2627,11 @@
 (defn- reviewable?
   "A link card can only be accepted once both its topics exist; a topic of
    a kind the ontology lacks, once that type joins it."
-  [kg {:keys [card data waits-type]}]
+  [kg {:keys [card data waits-type waits-relation]}]
   (cond
     waits-type (some? (profile/node-type-of (fold/profile kg) (keyword waits-type)))
+    waits-relation (and (some? (profile/relation (fold/profile kg) (keyword waits-relation)))
+                        (get-in kg [:concepts (:from data)]) (get-in kg [:concepts (:to data)]))
     (not= :edge card) true
     :else (and (get-in kg [:concepts (:from data)]) (get-in kg [:concepts (:to data)]))))
 
@@ -2576,7 +2641,7 @@
         ;; the buttons refuse anyway
         ;; the guided «Your course» step is pinned above the pile, never
         ;; buried five-at-a-time behind the drafts it waits for
-        build? #(#{:build-next :profile-next :missing-steps :triage :type-draft :derive-next} (:card %))
+        build? #(#{:build-next :profile-next :missing-steps :triage :type-draft :relation-draft :derive-next} (:card %))
         pinned (filter build? @cards)
         pile (remove build? @cards)
         ready (if (foreign?) pile (filter #(reviewable? kg %) pile))

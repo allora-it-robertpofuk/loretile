@@ -1329,8 +1329,12 @@
    a system quoted under «#### 2.A. Buyer Review» sits in that step too,
    and its «step 1 → step 2» hints filled the budget (A7). Adjacent steps
    pair across parts too — an earlier part's topics come in `kg` with
-   their :step — as definitions that mention each other do."
-  [kg batch limit]
+   their :step — as definitions that mention each other do.
+   `open?` (2026-11-20, wiki/Ontology-Graph.md slice 4): the ontology can
+   grow — a SIGNALLED pair whose types no relation connects is still asked,
+   so the model can name the missing relation; unsignalled ones stay out."
+  ([kg batch limit] (edge-candidates kg batch limit nil))
+  ([kg batch limit {:keys [open?]}]
   (let [p (profile kg)
         typed? (not (profile/learning? p))
         ordering (profile/ordering-relation p)
@@ -1343,6 +1347,7 @@
                       c (cond
                           (seq fwd) (assoc c :fits fwd)
                           (seq bwd) (assoc c :from to :to from :fits bwd)
+                          (and open? (:signalled? c)) (assoc c :fits [])
                           :else nil)]
                   (cond-> c (and c (not (some #{ordering} (:fits c)))) no-step)))
         ids (set (map :id batch))
@@ -1358,7 +1363,7 @@
                    (assoc s :a (:id a) :b (:id b) :signalled? true)
                    {:a (:id a) :b (:id b) :from (:id a) :to (:id b) :why [] :signalled? false}))]
     (->> (if typed? (keep typed scored) scored)
-         (sort-by (complement :signalled?)) (take limit) vec)))
+         (sort-by (complement :signalled?)) (take limit) vec))))
 
 (defn topo-order
   "Prerequisites first. Deterministic (sorted tie-break). `type` = the
